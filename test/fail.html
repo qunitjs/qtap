@@ -1,0 +1,10 @@
+<!DOCTYPE html>
+<title>fail</title>
+<script>
+console.log('TAP version 13');
+console.log('ok 1 Foo bar');
+console.log("not ok 2 \u001b[31mexample > hello fail\u001b[39m");
+console.log("  ---\n  message: \"y\"\n  severity: failed\n  actual  : {\n  \"foo\": \"50\",\n  \"quux\": \"62\"\n}\n  expected: {\n  \"foo\": \"50\",\n  \"quux\": \"70\"\n}\n  stack: |\n    @https://demo.localhost:4000/test/fail.html:21:12\n  ...");
+console.log('ok 3 Quux');
+console.log('1..3');
+</script>

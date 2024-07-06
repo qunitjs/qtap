@@ -1,0 +1,57 @@
+name: CI
+on:
+  - push
+  - pull_request
+
+jobs:
+
+  main-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "Linux: Node 20"
+            # Includes firefox, chromium
+            # https://github.com/actions/runner-images/blob/ubuntu24/20241215.1/images/ubuntu/Ubuntu2404-Readme.md
+            os: ubuntu-24.04
+            node: 20.x
+
+          - name: "Linux: Node 22"
+            os: ubuntu-24.04
+            node: 22.x
+
+          # Includes Firefox, Google Chrome, Microsoft Edge
+          # https://github.com/actions/runner-images/blob/win22/20241211.1/images/windows/Windows2022-Readme.md
+          - name: "Windows: Node 20"
+            os: windows-latest
+            node: 20.x
+
+          # Includes Firefox, Google Chrome, Safari
+          # https://github.com/actions/runner-images/blob/macos-13/20241216.479/images/macos/macos-13-Readme.md
+          - name: "macOS: Node 20"
+            os: macos-13
+            node: 20.x
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    env:
+      FORCE_COLOR: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        if: ${{ runner.os != 'Windows' }}
+        with:
+          path: |
+            ~/.npm
+          key: ${{ runner.os }}-${{ hashFiles('**/package.json') }}
+
+      - name: Use Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - run: npm install
+
+      - run: npm test
+
