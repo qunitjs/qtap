@@ -1,12 +1,51 @@
 #!/usr/bin/env node
-
 'use strict';
 
+import program from 'commander';
+import qtap from '../index.js';
+
+program
+  .name('qtap')
+  .usage('[--browser <name>] <file> [file...]')
+  .description('Run unit tests in real browsers', {
+    file: 'One or more local HTML files or URLs'
+  })
+  .arguments('<file...>')
+  .option('-b, --browser <name>',
+    'One or more comma-separated local browser names, or ./path to a JSON file.\n' +
+      'Choices: "firefox", "chrome", "safari"\n' +
+      'Example: "firefox,chrome"\n' +
+      'Default: "firefox"'
+  )
+  .option('-w, --watch', 'Watch files for changes and re-run the test suite')
+  .option('-d, --debug', 'Enable verbose debugging')
+  .option('-V, --version', 'Display version number')
+  .helpOption('-h, --help', 'Display this usage information')
+  .parse(process.argv);
+
+const opts = program.opts();
+
+if (opts.version) {
+  const packageFile = new URL('../package.json', import.meta.url);
+  const fs = await import('node:fs');
+  const version = JSON.parse(fs.readFileSync(packageFile)).version;
+  console.log(version);
+} else if (!program.args.length) {
+  program.help();
+} else {
+  try {
+    const exitCode = await qtap.run(opts.browser || 'firefox', program.args, {
+      debug: opts.debug
+    });
+    process.exit(exitCode);
+  } catch (e) {
+    console.error(e);
+    process.exit(1);
+  }
+}
+
 /**
- * usage: qbrow [--browser <name|file>] <file|url> [<file|url>...]
- *
  * --browser  dotless = comma-separated names
- *            "./" file = JS or JSON file that returns an array
  *            Default: firefox (all are headless, open the file yourself for non-headless)
  *            Options:
  *            - firefox

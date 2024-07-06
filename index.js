@@ -1,42 +1,17 @@
-#!/usr/bin/env node
 'use strict';
 
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
-import url from 'node:url';
 import util from 'node:util';
 import os from 'node:os';
 import cp from 'node:child_process';
 
-import program from 'commander';
 import kleur from 'kleur';
 
-import TapReporter from '../src/reporters/TapReporter.mjs';
-
-program
-  .name('qbrow')
-  .usage('[--browser <name>] <file> [file...]')
-  .description('Run tests in a web browser', {
-    file: 'One or more local HTML files or URLs'
-  })
-  .arguments('<file...>')
-  .option('-b, --browser <name>',
-    'One or more comma-separated local browser names, or ./path to a JSON file.\n' +
-      'Choices: "firefox", "chrome", "safari"\n' +
-      'Example: "firefox,chrome"\n' +
-      'Default: "firefox"'
-  )
-  .option('-w, --watch', 'Watch files for changes and re-run the test suite')
-  .option('-d, --debug', 'Enable verbose debugging')
-  .option('-V, --version', 'Display version number')
-  .helpOption('-h, --help', 'Display this usage information')
-  .parse(process.argv);
-
-const opts = program.opts();
-
 // TODO: Merge TAP streams from browsers into one unified output
+// import TapReporter from '../src/reporters/TapReporter.mjs';
 // TODO: tap-parser? TapReporter?
 
 const MIME_TYPES = {
@@ -60,17 +35,22 @@ const MIME_TYPES = {
   woff: 'font/woff',
 };
 
-function makeLogger(channel) {
-  return {
-    debug: !opts.debug ? function () {} : function(messageCode, ...params) {
-      const paramsFmt = params.flat().map(param => util.inspect(param, { colors: false })).join(' ');
-      console.error(kleur.grey(`[DEBUG] ${channel}: ${messageCode} ${paramsFmt}`));
-    },
-    warning(messageCode, ...params) {
-      const paramsFmt = params.flat().map(param => util.inspect(param, { colors: true })).join(' ');
-      console.error(kleur.yellow(`[WARNING] ${channel}: ${messageCode} ${paramsFmt}`));
-    }
+function makeLogger(defaultChannel, printError, printDebug = null) {
+  function channel (prefix) {
+    return {
+      channel: channel,
+      debug: !printDebug ? function () {} : function debug (messageCode, ...params) {
+        const paramsFmt = params.flat().map(param => util.inspect(param, { colors: false })).join(' ');
+        printDebug(kleur.grey(`[DEBUG] ${prefix}: ${messageCode} ${paramsFmt}`));
+      },
+      warning: function warning (messageCode, ...params) {
+        const paramsFmt = params.flat().map(param => util.inspect(param, { colors: true })).join(' ');
+        printError(kleur.yellow(`[WARNING] ${prefix}: ${messageCode} ${paramsFmt}`));
+      }
+    };
   };
+
+  return channel(defaultChannel);
 }
 
 class ControlServer {
@@ -78,26 +58,24 @@ class ControlServer {
   static nextClientId = 1
   testFile
   browsers
-  reporter
   testFilePromise
   proxyBase
   proxyBasePromise
 
-  constructor (testFile, reporter) {
-    this.root = process.cwd()
+  constructor (root, testFile, logger) {
+    this.root = root || process.cwd()
     this.testFile = testFile;
     // Prefetching the test file in parallel with http.Server#listen.
     this.testFilePromise = this.fetchTestFile(this.testFile);
     this.browsers = new Map();
-    this.reporter = reporter;
-    this.log = makeLogger('qbrow_server-' + this.constructor.nextServerId);
+    this.logger = logger.channel('qbrow_server-' + this.constructor.nextServerId);
     this.constructor.nextServerId++;
 
     const server = http.createServer();
     this.proxyBasePromise = new Promise((resolve) => {
       server.on('listening', () => {
         this.proxyBase = 'http://localhost:' + server.address().port;
-        this.log.debug('listening', this.proxyBase, this.testFile);
+        this.logger.debug('listening', this.proxyBase, this.testFile);
         resolve(this.proxyBase);
       });
     });
@@ -110,7 +88,7 @@ class ControlServer {
       // Extract path and query parameters
       try {
         const url = new URL(this.proxyBase + req.url);
-        this.log.debug('request_url', req.url);
+        this.logger.debug('request_url', req.url);
         switch (url.pathname) {
         case '/.qbrow/tap/':
           this.handleTap(req, url, resp);
@@ -122,7 +100,7 @@ class ControlServer {
           this.handleStatic(req, url, resp);
         }
       } catch (e) {
-        this.log.warning('respond_uncaught', e);
+        this.logger.warning('respond_uncaught', e);
         this.serveError(resp, 500, e);
       }
     });
@@ -131,7 +109,7 @@ class ControlServer {
     server.listen();
 
     this.close = () => {
-      this.log.debug('http_close');
+      this.logger.debug('http_close');
       server.close();
       server.closeAllConnections();
       this.close = null;
@@ -242,6 +220,11 @@ class ControlServer {
 
     // Injecting our script to collect TAP results and know when to stop
     // await this.getProxyBase() + '/.qbrow/tap/?qbrow_clientId=' + clientId;
+    //
+
+    // TODO: Instead of sending "stop" from client (and thus need to call
+    // QUnit.done, or parse tap client-side), let the server simply stop
+    // the browser process once it has received the end a TAP stream.
     html = this.replaceOnce(html, [
         /<\/body>(?![\s\S]*<\/body>)/i,
         /<\/html>(?![\s\S]*<\/html>)/i,
@@ -258,13 +241,13 @@ class ControlServer {
     const ext = path.extname(url.pathname).slice(1);
     if (!filePath.startsWith(this.root)) {
       // Disallow outside directory traversal
-      this.log.debug('respond_static_deny', url.pathname);
+      this.logger.debug('respond_static_deny', url.pathname);
       return this.serveError(resp, 403, 'Forbidden');
     }
 
     const clientId = url.searchParams.get('qbrow_clientId');
     if (url.pathname === '/' && clientId !== null) {
-      this.log.debug('respond_static_testfile', clientId);
+      this.logger.debug('respond_static_testfile', clientId);
       resp.writeHead(200, {'Content-Type': MIME_TYPES[ext] || MIME_TYPES.html});
       resp.write(await this.getTestFile(clientId));
       resp.end();
@@ -272,15 +255,15 @@ class ControlServer {
     }
 
     if (!fs.existsSync(filePath)) {
-      this.log.debug('respond_static_notfound', filePath);
+      this.logger.debug('respond_static_notfound', filePath);
       return this.serveError(resp, 404, 'Not Found');
     }
 
-    this.log.debug('respond_static_pipe', filePath);
+    this.logger.debug('respond_static_pipe', filePath);
     resp.writeHead(200, {'Content-Type': MIME_TYPES[ext] || MIME_TYPES.bin});
     fs.createReadStream(filePath)
       .on('error', (err) => {
-        this.log.warning('respond_static_pipe_error', err);
+        this.logger.warning('respond_static_pipe_error', err);
         resp.end();
       })
       .pipe(resp);
@@ -292,7 +275,7 @@ class ControlServer {
         body += data;
       });
       req.on('end', () => {
-        this.log.debug('tap', '\n', body);
+        this.logger.debug('tap', '\n', body);
       });
       resp.writeHead(204);
       resp.end();
@@ -314,9 +297,9 @@ class ControlServer {
       resp.end();
 
       const clientId = url.searchParams.get('qbrow_clientId');
-      this.log.debug('browser_stop', clientId);
+      this.logger.debug('browser_stop', clientId);
       if (!this.browsers.get(clientId)) {
-        this.log.warning('browser_already_gone', clientId);
+        this.logger.warning('browser_already_gone', clientId);
       }
       this.browsers.get(clientId)?.abort('qbrow requested stop');
       this.browsers.delete(clientId);
@@ -341,20 +324,56 @@ class ControlServer {
     const controller = new AbortController();
     this.browsers.set(clientId, controller);
     try {
-      this.log.debug('browser_launch', clientId, browser.constructor.name);
+      this.logger.debug('browser_launch', clientId, browser.constructor.name);
       await browser.launch(clientId, url, controller.signal);
-      this.log.debug('browser_exit', clientId);
+      this.logger.debug('browser_exit', clientId);
     } catch (err) {
       // TODO: Report failure to TAP
-      this.log.warning('browser_error', err);
+      this.logger.warning('browser_error', err);
       this.browsers.delete(clientId);
     }
   }
 }
 
 class BaseBrowser {
-  constructor() {
-    this.log = makeLogger('qbrow_browser-' + this.constructor.name);
+  static getBrowser(name, logger) {
+    const _chromium = [];
+    const _chrome = [];
+    const _edge = [];
+    const localBrowsers = {
+      firefox: FirefoxBrowser,
+      safari: [],
+      chromium: [],
+      chrome: [],
+      edge: []
+    };
+
+    // --no-sandbox CHROMIUM_FLAGS
+    // Refer to karma launchers.
+    // Refer to airtap.
+    // Refer to puppeteer.
+    // Refer to playwright (Firefox, Safari).
+
+
+    // TODO: Deal with one-time shared setup across browser of the same provider.
+    // to setup browserstack tunnel once, and then tear it down at some point.
+    // Refer to karma browser launcher. Maybe just a process-level flag to track
+    // the "nonce"/semaphore that it is done for the setup, lazily. Easy enough?
+
+    // What about shutdown? Do we start it in a way that doesn't hold up the Node
+    // process and then hope to tie into process.on('exit') to quckly clean it up,
+    // risk zombie process. Or an official cleanup(), but then how do we ensure
+    // it is only called once. function identity in an ES6 Set(), that qunit-browser
+
+    logger.debug('get_browser', name);
+    const Browser = localBrowsers[name];
+    if (!Browser) {
+      throw new Error('Unknown browser name ' + name);
+    }
+    return new Browser(logger);
+  }
+  constructor(logger) {
+    this.logger = logger.channel('qbrow_browser-' + this.constructor.name);
     this.executable = this.getExecutable(process.platform);
   }
   getExecutable(platform) {
@@ -363,13 +382,13 @@ class BaseBrowser {
       // and beats concurrent fs/promises.access(cb) via Promise.all().
       // Starting the promise chain alone takes the same time as a loop with
       // 5x existsSync(), not even counting the await and boilerplate to manage it all.
-      this.log.debug('exe_candidate', candidate);
+      this.logger.debug('exe_candidate', candidate);
       if (fs.existsSync(candidate)) {
-        this.log.debug('exe_candidate_found');
+        this.logger.debug('exe_candidate_found');
         return candidate;
       }
     }
-    this.log.debug('exe_found_none');
+    this.logger.debug('exe_found_none');
   }
 
   getArguments(clientId, url) {
@@ -388,9 +407,9 @@ class BaseBrowser {
       throw new Error('No executable found');
     }
     const args = this.getArguments(clientId, url);
-    const log = makeLogger(`qbrow_browser-${this.constructor.name}-${clientId}`);
+    const logger = this.logger.channel(`qbrow_browser-${this.constructor.name}-${clientId}`);
 
-    log.debug('exe_start', exe, args);
+    logger.debug('exe_start', exe, args);
     const spawned = cp.spawn(exe, args, { signal });
 
     return new Promise((resolve, reject) => {
@@ -398,12 +417,12 @@ class BaseBrowser {
         if (signal.aborted) {
           resolve();
         } else {
-          log.debug('exe_error', error);
+          logger.debug('exe_error', error);
           reject(error);
         }
       });
       spawned.on('exit', (code, sig) => {
-        log.debug('exe_exit', code, sig);
+        logger.debug('exe_exit', code, sig);
         if (!signal.aborted) {
           reject(new Error(`Exit code code=${code} signal=${sig}`));
         } else {
@@ -482,51 +501,30 @@ class FirefoxBrowser extends LocalBrowser {
   }
 }
 
-function getBrowser(name) {
-  const _chromium = [];
-  const _chrome = [];
-  const _edge = [];
-  const localBrowsers = {
-    firefox: FirefoxBrowser,
-    safari: [],
-    chromium: [],
-    chrome: [],
-    edge: []
-  };
-
-  // --no-sandbox CHROMIUM_FLAGS
-  // Refer to karma launchers.
-  // Refer to airtap.
-  // Refer to puppeteer.
-  // Refer to playwright (Firefox, Safari).
-
-
-  // TODO: Deal with one-time shared setup across browser of the same provider.
-  // to setup browserstack tunnel once, and then tear it down at some point.
-  // Refer to karma browser launcher. Maybe just a process-level flag to track
-  // the "nonce"/semaphore that it is done for the setup, lazily. Easy enough?
-
-  // What about shutdown? Do we start it in a way that doesn't hold up the Node
-  // process and then hope to tie into process.on('exit') to quckly clean it up,
-  // risk zombie process. Or an official cleanup(), but then how do we ensure
-  // it is only called once. function identity in an ES6 Set(), that qunit-browser
-
-  makeLogger('qbrow_main').debug('get_browser', name);
-  const Browser = localBrowsers[name];
-  if (!Browser) {
-    throw new Error('Unknown browser name ' + name);
-  }
-  return new Browser();
-}
-
 /**
- * @param {string} browser
- * @param {string[]} files
+ * @param {string} browser One or more comma-separated local browser names,
+ *  or path starting with "./" to a JSON file.
+ * @param {string[]} files Files and/or URLs.
+ * @param {Object} [options]
+ * @param {boolean} [options.debug=false]
+ * @param {Function} [options.printInfo=console.log]
+ * @param {Function} [options.printError=console.error]
+ * @param {string} [options.root=process.cwd()] Root directory to find files in
+ *  and serve up. Ignored if testing from URLs.
+ * @return {number} Exit code. 0 is success, 1 is failed.
  */
-async function runBrowsers(browser, files) {
+async function run(browser, files, options) {
+  // TODO: Add support for .json browser description.
+  // Or, instead of JSON, it can be an importable JS file.
+  // Caller decides what modules to import etc. Inspired by ESLint FlatConfig.
   const browserNames = browser.startsWith('./')
     ? JSON.parse(fs.readFileSync(browser))
     : browser.split(',');
+  const logger = makeLogger(
+    'qbrow_main',
+    options.printError || console.error,
+    options.debug ? console.error : null
+  );
 
   // reporter = reporter || new TapReporter();
   // const expect = 'verbose' ? NaN : (urls.length * browsers.length);
@@ -535,7 +533,7 @@ async function runBrowsers(browser, files) {
 
   const servers = [];
   for (const file of files) {
-    servers.push(new ControlServer(file));
+    servers.push(new ControlServer(options.root, file, logger));
   }
 
   // Don't await launchBrowser() now, since each returns a Promise that will
@@ -544,7 +542,7 @@ async function runBrowsers(browser, files) {
   const browsers = [];
   const browserLaunches = [];
   for (const browserName of browserNames) {
-    const browser = getBrowser(browserName);
+    const browser = BaseBrowser.getBrowser(browserName, logger);
     browsers.push(browser);
     for (const server of servers) {
       browserLaunches.push(server.launchBrowser(browser));
@@ -565,23 +563,14 @@ async function runBrowsers(browser, files) {
     }
   }
 
-  // Node.js not exiting or leaving stuff behind? Check process.getActiveResourcesInfo()
-  // process.exit();
+  // TODO: Return exit status
+  // TODO: Allow controlling where stdout goes
+  // TODO: Allow controlling if setting exit status or not, e.g. when used progammatically.
 }
 
-if (opts.version) {
-  const packageFile = new URL('../package.json', import.meta.url);
-  const version = JSON.parse(fs.readFileSync(packageFile)).version;
-  console.log(version);
-} else if (!program.args.length) {
-  program.help();
-} else {
-  runBrowsers(opts.browser || 'firefox', program.args)
-    .catch((e) => {
-      console.error(e);
-      process.exit(1);
-    });;
-}
+export default {
+  run
+};
 
 /*
     req.onreadystatechange = function () {
