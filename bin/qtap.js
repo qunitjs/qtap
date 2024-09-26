@@ -18,7 +18,7 @@ program
       'Default: "firefox"'
   )
   .option('-w, --watch', 'Watch files for changes and re-run the test suite')
-  .option('-d, --debug', 'Enable verbose debugging')
+  .option('-v, --verbose', 'Enable verbose debugging')
   .option('-V, --version', 'Display version number')
   .helpOption('-h, --help', 'Display this usage information')
   .parse(process.argv);
@@ -35,7 +35,7 @@ if (opts.version) {
 } else {
   try {
     const exitCode = await qtap.run(opts.browser || 'firefox', program.args, {
-      debug: opts.debug
+      debug: opts.verbose
     });
     process.exit(exitCode);
   } catch (e) {

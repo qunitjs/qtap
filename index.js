@@ -285,7 +285,7 @@ class ControlServer {
         body += data;
       });
       req.on('end', () => {
-        this.logger.debug('tap', '\n', body);
+        this.logger.debug('browser_tap', '\n', body);
       });
       resp.writeHead(204);
       resp.end();
@@ -401,22 +401,18 @@ class BaseBrowser {
     this.logger.debug('exe_found_none');
   }
 
-  getArguments(clientId, url) {
-    return [url];
-  }
-
   /**
+   * @param {string[]} args
    * @param {string} clientId
    * @param {string} url
    * @param {AbortSignal} signal
    * @return {Promise}
    */
-  async startExecutable(clientId, url, signal) {
+  async startExecutable(args, clientId, url, signal) {
     const exe = this.executable;
     if (!exe) {
       throw new Error('No executable found');
     }
-    const args = this.getArguments(clientId, url);
     const logger = this.logger.channel(`qtap_browser-${this.constructor.name}-${clientId}`);
 
     logger.debug('exe_start', exe, args);
@@ -487,13 +483,7 @@ class BaseBrowser {
   }
 }
 
-class LocalBrowser extends BaseBrowser {
-  async launch(clientId, url, signal) {
-    await this.startExecutable(clientId, url, signal);
-  }
-}
-
-class FirefoxBrowser extends LocalBrowser {
+class FirefoxBrowser extends BaseBrowser {
   *getCandidates(platform) {
     if (platform === 'darwin') {
       if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
@@ -501,13 +491,16 @@ class FirefoxBrowser extends LocalBrowser {
     }
   }
 
-  getArguments(clientId, url) {
-    const tempDir = path.join(os.tmpdir(), 'qtap-' + clientId);
-    fs.rmSync(tempDir, { recursive: true, force: true });
-    fs.mkdirSync(tempDir, { recursive: true });
-    const profileDir = tempDir;
+  async launch(clientId, url, signal) {
+    // Use mkdtemp (instead of only tmpdir) so that multiple qtap procesess don't clash.
+    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
     // TODO: Launch with --headless.
-    return [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
+    const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
+    try {
+      await this.startExecutable(args, clientId, url, signal);
+    } finally {
+      fs.rmSync(profileDir, { recursive: true, force: true });
+    }
   }
 }
 
