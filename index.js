@@ -63,12 +63,22 @@ class ControlServer {
   proxyBasePromise
 
   constructor (root, testFile, logger) {
-    this.root = root || process.cwd()
+    if (!root) {
+      // For `qtap test/index.html`, default root to cwd.
+      root = process.cwd();
+      // FOr `qtap ../foobar/test/index.html`, default root to ../foobar.
+      const relPath = path.relative(root, path.join(root, testFile));
+      const parent = relPath.match(/^[./\\]+/)?.[0];
+      if (parent) {
+        root = path.join(root, parent);
+      }
+    }
+    this.root = root;
     this.testFile = testFile;
     // Prefetching the test file in parallel with http.Server#listen.
     this.testFilePromise = this.fetchTestFile(this.testFile);
     this.browsers = new Map();
-    this.logger = logger.channel('qbrow_server-' + this.constructor.nextServerId);
+    this.logger = logger.channel('qtap_server-' + this.constructor.nextServerId);
     this.constructor.nextServerId++;
 
     const server = http.createServer();
@@ -90,10 +100,10 @@ class ControlServer {
         const url = new URL(this.proxyBase + req.url);
         this.logger.debug('request_url', req.url);
         switch (url.pathname) {
-        case '/.qbrow/tap/':
+        case '/.qtap/tap/':
           this.handleTap(req, url, resp);
           break;
-        case '/.qbrow/stop/':
+        case '/.qtap/stop/':
           this.handleStop(req, url, resp);
           break;
         default:
@@ -160,7 +170,7 @@ class ControlServer {
 
   async getTestFile (clientId) {
     // TODO: eslint-ignore this function, browser env, XMLHttpRequest
-    const inlineTapScript = (function qbrowTap() {
+    const inlineTapScript = (function qtapTap() {
       QUnit.reporters.tap.init(QUnit);
 
         var xhr = new XMLHttpRequest();
@@ -174,10 +184,10 @@ class ControlServer {
       .toString()
       .replace(
         "'{{STOP_URL}}'",
-        JSON.stringify(await this.getProxyBase() + '/.qbrow/stop/?qbrow_clientId=' + clientId)
+        JSON.stringify(await this.getProxyBase() + '/.qtap/stop/?qtap_clientId=' + clientId)
       )
       .replace(/\n|^\s+/gm, ' ');
-    const inlineStopScript = (function qbrowStop() {
+    const inlineStopScript = (function qtapStop() {
         var xhr = new XMLHttpRequest();
         xhr.open(
           'GET',
@@ -189,7 +199,7 @@ class ControlServer {
       .toString()
       .replace(
         "'{{STOP_URL}}'",
-        JSON.stringify(await this.getProxyBase() + '/.qbrow/stop/?qbrow_clientId=' + clientId)
+        JSON.stringify(await this.getProxyBase() + '/.qtap/stop/?qtap_clientId=' + clientId)
       )
       .replace(/\n|^\s+/gm, ' ');
 
@@ -219,7 +229,7 @@ class ControlServer {
     );
 
     // Injecting our script to collect TAP results and know when to stop
-    // await this.getProxyBase() + '/.qbrow/tap/?qbrow_clientId=' + clientId;
+    // await this.getProxyBase() + '/.qtap/tap/?qtap_clientId=' + clientId;
     //
 
     // TODO: Instead of sending "stop" from client (and thus need to call
@@ -245,7 +255,7 @@ class ControlServer {
       return this.serveError(resp, 403, 'Forbidden');
     }
 
-    const clientId = url.searchParams.get('qbrow_clientId');
+    const clientId = url.searchParams.get('qtap_clientId');
     if (url.pathname === '/' && clientId !== null) {
       this.logger.debug('respond_static_testfile', clientId);
       resp.writeHead(200, {'Content-Type': MIME_TYPES[ext] || MIME_TYPES.html});
@@ -296,12 +306,12 @@ class ControlServer {
       resp.writeHead(204);
       resp.end();
 
-      const clientId = url.searchParams.get('qbrow_clientId');
+      const clientId = url.searchParams.get('qtap_clientId');
       this.logger.debug('browser_stop', clientId);
       if (!this.browsers.get(clientId)) {
         this.logger.warning('browser_already_gone', clientId);
       }
-      this.browsers.get(clientId)?.abort('qbrow requested stop');
+      this.browsers.get(clientId)?.abort('qtap requested stop');
       this.browsers.delete(clientId);
   }
 
@@ -320,7 +330,7 @@ class ControlServer {
 
   async launchBrowser (browser) {
     const clientId = 'client_' + this.constructor.nextClientId++;
-    const url = await this.getProxyBase() + '/?qbrow_clientId=' + clientId;
+    const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
     const controller = new AbortController();
     this.browsers.set(clientId, controller);
     try {
@@ -373,7 +383,7 @@ class BaseBrowser {
     return new Browser(logger);
   }
   constructor(logger) {
-    this.logger = logger.channel('qbrow_browser-' + this.constructor.name);
+    this.logger = logger.channel('qtap_browser-' + this.constructor.name);
     this.executable = this.getExecutable(process.platform);
   }
   getExecutable(platform) {
@@ -407,7 +417,7 @@ class BaseBrowser {
       throw new Error('No executable found');
     }
     const args = this.getArguments(clientId, url);
-    const logger = this.logger.channel(`qbrow_browser-${this.constructor.name}-${clientId}`);
+    const logger = this.logger.channel(`qtap_browser-${this.constructor.name}-${clientId}`);
 
     logger.debug('exe_start', exe, args);
     const spawned = cp.spawn(exe, args, { signal });
@@ -471,7 +481,7 @@ class BaseBrowser {
    * If you lazy-create any shared resources (such as a tunnel connection
    * for a cloud browser provider, a server or other socket, a cache directory,
    * etc) then this method can be used to tear those down once at the end
-   * of the qbrow process.
+   * of the qtap process.
    */
   async cleanupOnce() {
   }
@@ -492,7 +502,7 @@ class FirefoxBrowser extends LocalBrowser {
   }
 
   getArguments(clientId, url) {
-    const tempDir = path.join(os.tmpdir(), 'qbrow-' + clientId);
+    const tempDir = path.join(os.tmpdir(), 'qtap-' + clientId);
     fs.rmSync(tempDir, { recursive: true, force: true });
     fs.mkdirSync(tempDir, { recursive: true });
     const profileDir = tempDir;
@@ -521,7 +531,7 @@ async function run(browser, files, options) {
     ? JSON.parse(fs.readFileSync(browser))
     : browser.split(',');
   const logger = makeLogger(
-    'qbrow_main',
+    'qtap_main',
     options.printError || console.error,
     options.debug ? console.error : null
   );

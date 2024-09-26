@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-import program from 'commander';
+import { program } from 'commander';
 import qtap from '../index.js';
 
 program
