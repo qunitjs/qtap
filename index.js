@@ -10,6 +10,10 @@ import cp from 'node:child_process';
 
 import kleur from 'kleur';
 
+import tapFinished from '@tapjs/tap-finished';
+
+console.log(tapFinished);
+
 // TODO: Merge TAP streams from browsers into one unified output
 // import TapReporter from '../src/reporters/TapReporter.mjs';
 // TODO: tap-parser? TapReporter?
@@ -31,36 +35,17 @@ const MIME_TYPES = {
   ttf: 'font/sfnt',
   txt: 'text/plain; charset=utf-8',
   woff2: 'application/font-woff2',
-  woff2: 'font/woff2',
-  woff: 'font/woff',
+  woff: 'font/woff'
 };
 
-function makeLogger(defaultChannel, printError, printDebug = null) {
-  function channel (prefix) {
-    return {
-      channel: channel,
-      debug: !printDebug ? function () {} : function debug (messageCode, ...params) {
-        const paramsFmt = params.flat().map(param => util.inspect(param, { colors: false })).join(' ');
-        printDebug(kleur.grey(`[DEBUG] ${prefix}: ${messageCode} ${paramsFmt}`));
-      },
-      warning: function warning (messageCode, ...params) {
-        const paramsFmt = params.flat().map(param => util.inspect(param, { colors: true })).join(' ');
-        printError(kleur.yellow(`[WARNING] ${prefix}: ${messageCode} ${paramsFmt}`));
-      }
-    };
-  };
-
-  return channel(defaultChannel);
-}
-
 class ControlServer {
-  static nextServerId = 1
-  static nextClientId = 1
-  testFile
-  browsers
-  testFilePromise
-  proxyBase
-  proxyBasePromise
+  static nextServerId = 1;
+  static nextClientId = 1;
+  testFile;
+  browsers;
+  testFilePromise;
+  proxyBase;
+  proxyBasePromise;
 
   constructor (root, testFile, logger) {
     if (!root) {
@@ -100,14 +85,11 @@ class ControlServer {
         const url = new URL(this.proxyBase + req.url);
         this.logger.debug('request_url', req.url);
         switch (url.pathname) {
-        case '/.qtap/tap/':
-          this.handleTap(req, url, resp);
-          break;
-        case '/.qtap/stop/':
-          this.handleStop(req, url, resp);
-          break;
-        default:
-          this.handleStatic(req, url, resp);
+          case '/.qtap/tap/':
+            this.handleTap(req, url, resp);
+            break;
+          default:
+            this.handleStatic(req, url, resp);
         }
       } catch (e) {
         this.logger.warning('respond_uncaught', e);
@@ -126,82 +108,67 @@ class ControlServer {
     };
   }
 
-  async getProxyBase() {
-    return this.proxyBase || await this.proxyBasePromise;
-  }
-
-  isURL(file) {
-    return file.startsWith('http:') || file.startsWith('https:');
-  }
-
-  escapeHTML(text) {
-    return text.replace(/['"<>&]/g, ( s ) => {
-      switch ( s ) {
-        case '\'':
-          return '&#039;';
-        case '"':
-          return '&quot;';
-        case '<':
-          return '&lt;';
-        case '>':
-          return '&gt;';
-        case '&':
-          return '&amp;';
-      }
-    });
-  }
-
-  replaceOnce(input, patterns, replacement) {
-    for (const pattern of patterns) {
-      if (pattern.test(input)) {
-        return input.replace(pattern, replacement);
-      }
-    }
-    return input;
-  }
-
   /** @return {string} HTML */
   async fetchTestFile (file) {
     // As of Node.js 21, fetch() does not yet support file URLs.
     return this.isURL(file)
-        ? (await (await fetch(file)).text())
-        : (await fsPromises.readFile(file)).toString();
+      ? (await (await fetch(file)).text())
+      : (await fsPromises.readFile(file)).toString();
   }
 
   async getTestFile (clientId) {
-    // TODO: eslint-ignore this function, browser env, XMLHttpRequest
-    const inlineTapScript = (function qtapTap() {
-      QUnit.reporters.tap.init(QUnit);
+    /* eslint-disable no-undef -- Browser code */
+    const qtapInitFunctionStr = function qtapInit () {
+      // Support QUnit 2.16 - 2.22: Enable TAP reporter ourselves.
+      // In QUnit 3.0+ this happens automatically with qunit_config_reporters_tap.
+      if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
+        QUnit.reporters.tap.init(QUnit);
+      }
 
-        var xhr = new XMLHttpRequest();
+      let qtapBuffer = '';
+      let qtapTimeout;
+      const qtapConsoleLog = console.log;
+
+      function qtapSend () {
+        const xhr = new XMLHttpRequest();
         xhr.open(
-          'GET',
-          '{{STOP_URL}}',
+          'POST',
+          '{{QTAP_URL}}',
           true
         );
-        xhr.send();
-    })
+        xhr.send(qtapBuffer);
+        qtapBuffer = '';
+        qtapTimeout = null;
+      }
+
+      console.log = function qtapLog (str) {
+        if (typeof str === 'string') {
+          qtapBuffer += str + '\n';
+          if (!qtapTimeout) {
+            // TODO: Determine if order of consecutive XHR can be assumed.
+            // If not, then either include an order query parameter, or
+            // debounce it such that each flush wants for XHR onload,
+            // thus naturally avoiding ordering issues and naturally
+            // speeding up or slowing down the flush interval.
+            // Downside: This "dynamic" interval willl 2x the amount it
+            // should be since it relies on roundtrip.
+            // In summary, we'd switch from a fixed "debounce" (trailing send)
+            // to dynamic "throttle" (leading send).
+            // This has the benefit of fast initial progress, which is nice.
+            qtapTimeout = setTimeout(qtapSend, 100);
+          }
+        }
+        return qtapConsoleLog.apply(this, arguments);
+      };
+      /* eslint-enable no-undef */
+    }
       .toString()
+      .replace(/\/\/.+$/gm, '')
+      .replace(/\n|^\s+/gm, ' ')
       .replace(
-        "'{{STOP_URL}}'",
-        JSON.stringify(await this.getProxyBase() + '/.qtap/stop/?qtap_clientId=' + clientId)
-      )
-      .replace(/\n|^\s+/gm, ' ');
-    const inlineStopScript = (function qtapStop() {
-        var xhr = new XMLHttpRequest();
-        xhr.open(
-          'GET',
-          '{{STOP_URL}}',
-          true
-        );
-        xhr.send();
-    })
-      .toString()
-      .replace(
-        "'{{STOP_URL}}'",
-        JSON.stringify(await this.getProxyBase() + '/.qtap/stop/?qtap_clientId=' + clientId)
-      )
-      .replace(/\n|^\s+/gm, ' ');
+        "'{{QTAP_URL}}'",
+        JSON.stringify(await this.getProxyBase() + '/.qtap/tap/?qtap_clientId=' + clientId)
+      );
 
     const base = this.isURL(this.testFile)
       ? this.testFile
@@ -220,33 +187,26 @@ class ControlServer {
     // * Ignore <heading> and <head-thing>.
     // * Support <head x=y>, including with tab or newline.
     html = this.replaceOnce(html, [
-        /<head(?:\s[^>]*)?>/i,
-        /<html(?:\s[^>]*)?/i,
-        /<!doctype[^>]*>/i,
-        /^/,
-      ],
-      (m) => m + `<base href="${this.escapeHTML(base)}"/>`
+      /<head(?:\s[^>]*)?>/i,
+      /<html(?:\s[^>]*)?/i,
+      /<!doctype[^>]*>/i,
+      /^/
+    ],
+    (m) => m + `<base href="${this.escapeHTML(base)}"/><script>window.qunit_config_reporters_tap = true;</script>`
     );
 
-    // Injecting our script to collect TAP results and know when to stop
-    // await this.getProxyBase() + '/.qtap/tap/?qtap_clientId=' + clientId;
-    //
-
-    // TODO: Instead of sending "stop" from client (and thus need to call
-    // QUnit.done, or parse tap client-side), let the server simply stop
-    // the browser process once it has received the end a TAP stream.
     html = this.replaceOnce(html, [
-        /<\/body>(?![\s\S]*<\/body>)/i,
-        /<\/html>(?![\s\S]*<\/html>)/i,
-        /$/,
-      ],
-      (m) => '<script> QUnit.done(' + inlineStopScript + ');</script>' + m
+      /<\/body>(?![\s\S]*<\/body>)/i,
+      /<\/html>(?![\s\S]*<\/html>)/i,
+      /$/
+    ],
+    (m) => '<script>(' + qtapInitFunctionStr + ')();</script>' + m
     );
 
     return html;
   }
 
-  async handleStatic(req, url, resp) {
+  async handleStatic (req, url, resp) {
     const filePath = path.join(this.root, url.pathname);
     const ext = path.extname(url.pathname).slice(1);
     if (!filePath.startsWith(this.root)) {
@@ -258,7 +218,7 @@ class ControlServer {
     const clientId = url.searchParams.get('qtap_clientId');
     if (url.pathname === '/' && clientId !== null) {
       this.logger.debug('respond_static_testfile', clientId);
-      resp.writeHead(200, {'Content-Type': MIME_TYPES[ext] || MIME_TYPES.html});
+      resp.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || MIME_TYPES.html });
       resp.write(await this.getTestFile(clientId));
       resp.end();
       return;
@@ -270,7 +230,7 @@ class ControlServer {
     }
 
     this.logger.debug('respond_static_pipe', filePath);
-    resp.writeHead(200, {'Content-Type': MIME_TYPES[ext] || MIME_TYPES.bin});
+    resp.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || MIME_TYPES.bin });
     fs.createReadStream(filePath)
       .on('error', (err) => {
         this.logger.warning('respond_static_pipe_error', err);
@@ -279,40 +239,100 @@ class ControlServer {
       .pipe(resp);
   }
 
-  handleTap(req, url, resp) {
-      let body = '';
-      req.on('data', (data) => {
-        body += data;
-      });
-      req.on('end', () => {
-        this.logger.debug('browser_tap', '\n', body);
-      });
-      resp.writeHead(204);
-      resp.end();
+  handleTap (req, url, resp) {
+    let body = '';
+    req.on('data', (data) => {
+      body += data;
+    });
+    req.on('end', () => {
+      this.logger.debug('browser_tap', body.slice(0, 10) + '…');
+      console.log(body);
+    });
+    resp.writeHead(204);
+    resp.end();
 
-      // const clientId = …
-      // TODO: Feed to TAP reporter.
-      // TODO: Verbose mode?
-      //   Default: TAP where each browser is 1 virtual test in case of success.
-      //   Verbose: TAP forwarded, test names prepended with [browsername].
-      //   Failures are shown either way, with prepended names.
-      // TODO: On "runEnd", report runtime
-      //   Default: No-op, as overall TAP line as single test (above) can contain runtime
-      //   Verbose: Output comment indicatinh browser done, and test runtime.
-      // TODO: On "runEnd" call browser.stop();
+    // TODO: On TAP 'end', call browser.stop();
+    // - clientId
+    // - create read-write stream in launch or lazy-create here
+    // - lazy call tapFinished() once and pipe stream to it
+    //   with callback that browser.stop()'s.
+    // - write body to tap stream
+
+    // TODO: Pipe same stream to one of two options, based on --reporter:
+    // - [tap | default in piped and CI?]: tap-parser + some kind of renumbering or prefixing.
+    //   client_1> ok 40 foo > bar
+    //   out> ok 1 - qtap > Firefox (client_1) connected! Running test/index.html.
+    //   out> ok 42 - foo > bar
+    //   -->
+    //   client_1> ok 40 foo > bar
+    //   client_2> ok 40 foo > bar
+    //   out> ok 1 - qtap > Firefox (client_1) connected! Running test/index.html.
+    //   out> ok 2 - qtap > Chromium (client_2) connected! Running test/index.html.
+    //   out> ok 81 - foo > bar [Firefox client_1]
+    //   out> ok 82 - foo > bar [Chromium client_2]
+    // - [minimal|default in interactive mode]
+    //   out> Testing /test/index.html
+    //   out>
+    //   out> [Firefox client_1] [blue *spinner] Running test 40.
+    //   out> [Chromium client_2] [grey] [star] [grey] Launching...
+    //   out> [Safari client_3] [grey] [star] [grey] Launching...
+    //   -->
+    //   out> Testing /test/index.html
+    //   out>
+    //   out> [Firefox client_1]: ✔ [green] Completed 123 tests in 42ms.
+    //   out> [Chromium client2]: [blue*spinner] Running test 40.
+    //   out> [Safari client_3] [grey] [star] [grey] Launching...
+    //   -->
+    //   out> Testing /test/index.html
+    //   out>
+    //   out> not ok 40 foo > bar # Chromium client_2
+    //   out> ---
+    //   out> message: failed
+    //   out> actual  : false
+    //   out> expected: true
+    //   out> stack: |
+    //   out>   @/example.js:46:12
+    //   out> ...
+    //   out>
+    //   out> [Firefox client_1]: ✔ [green] Completed 123 tests in 42ms.
+    //   out> [Chromium client_2]: ✘ [red] 2 failures.
+    //
+    //   If minimal is selected explicilty in piped/non-interactive/CI mode,
+    //   then it will have no spinners, and also lines won't overwrite each other.
+    //   Test counting will be disabled along with the spinner so instead we'll print:
+    //   out> Firefox client_1: Launching...
+    //   out> Firefox client_1: Running tests... [= instead of spinner/counter]
+    //   out> Firefox client_1: Completed 123 tets in 42ms.
+
+    // "▓", "▒", "░" // noise, 100
+    // "㊂", "㊀", "㊁" // toggle10, 100
+    // await new Promise(r=>setTimeout(r,100)); process.stdout.write('\r' + frames[i % frames.length] + '     ');
+    // writable.isTTY
+    // !process.env.CI
+
+    //   Default: TAP where each browser is 1 virtual test in case of success.
+    //   Verbose: TAP forwarded, test names prepended with [browsername].
+    //   Failures are shown either way, with prepended names.
+    // TODO: On "runEnd", report runtime
+    //   Default: No-op, as overall TAP line as single test (above) can contain runtime
+    //   Verbose: Output comment indicatinh browser done, and test runtime.
   }
 
-  handleStop(req, url, resp) {
-      resp.writeHead(204);
-      resp.end();
+  // TODO: Move into handleTap, on('end')
+  // TODO: Remove unused.
+  handleStop (req, url, resp) {
+    resp.writeHead(204);
+    resp.end();
 
-      const clientId = url.searchParams.get('qtap_clientId');
-      this.logger.debug('browser_stop', clientId);
-      if (!this.browsers.get(clientId)) {
-        this.logger.warning('browser_already_gone', clientId);
-      }
-      this.browsers.get(clientId)?.abort('qtap requested stop');
-      this.browsers.delete(clientId);
+    const clientId = url.searchParams.get('qtap_clientId');
+    this.logger.debug('browser_stop', clientId);
+    const browser = this.browsers.get(clientId);
+    if (!browser) {
+      this.logger.warning('browser_already_gone', clientId);
+    } else {
+      browser.controller.abort('qtap requested stop');
+    }
+    this.browsers.delete(clientId);
   }
 
   /**
@@ -320,9 +340,9 @@ class ControlServer {
    * @param {number} statusCode
    * @param {string|Error} e
    */
-  serveError(resp, statusCode, e) {
+  serveError (resp, statusCode, e) {
     if (!resp.headersSent) {
-      resp.writeHead(statusCode, {'Content-Type': MIME_TYPES.txt});
+      resp.writeHead(statusCode, { 'Content-Type': MIME_TYPES.txt });
       resp.write((e.stack || String(e)) + '\n');
     }
     resp.end();
@@ -331,8 +351,12 @@ class ControlServer {
   async launchBrowser (browser) {
     const clientId = 'client_' + this.constructor.nextClientId++;
     const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
+    const stream = new ReadableStream();
     const controller = new AbortController();
-    this.browsers.set(clientId, controller);
+    this.browsers.set(clientId, {
+      controller,
+      stream
+    });
     try {
       this.logger.debug('browser_launch', clientId, browser.constructor.name);
       await browser.launch(clientId, url, controller.signal);
@@ -343,10 +367,44 @@ class ControlServer {
       this.browsers.delete(clientId);
     }
   }
+
+  async getProxyBase () {
+    return this.proxyBase || await this.proxyBasePromise;
+  }
+
+  isURL (file) {
+    return file.startsWith('http:') || file.startsWith('https:');
+  }
+
+  escapeHTML (text) {
+    return text.replace(/['"<>&]/g, (s) => {
+      switch (s) {
+        case '\'':
+          return '&#039;';
+        case '"':
+          return '&quot;';
+        case '<':
+          return '&lt;';
+        case '>':
+          return '&gt;';
+        case '&':
+          return '&amp;';
+      }
+    });
+  }
+
+  replaceOnce (input, patterns, replacement) {
+    for (const pattern of patterns) {
+      if (pattern.test(input)) {
+        return input.replace(pattern, replacement);
+      }
+    }
+    return input;
+  }
 }
 
 class BaseBrowser {
-  static getBrowser(name, logger) {
+  static getBrowser (name, logger) {
     const _chromium = [];
     const _chrome = [];
     const _edge = [];
@@ -363,7 +421,6 @@ class BaseBrowser {
     // Refer to airtap.
     // Refer to puppeteer.
     // Refer to playwright (Firefox, Safari).
-
 
     // TODO: Deal with one-time shared setup across browser of the same provider.
     // to setup browserstack tunnel once, and then tear it down at some point.
@@ -382,11 +439,13 @@ class BaseBrowser {
     }
     return new Browser(logger);
   }
-  constructor(logger) {
+
+  constructor (logger) {
     this.logger = logger.channel('qtap_browser-' + this.constructor.name);
     this.executable = this.getExecutable(process.platform);
   }
-  getExecutable(platform) {
+
+  getExecutable (platform) {
     for (const candidate of this.getCandidates(platform)) {
       // Optimization: Use fs.existsSync. It is on par with accessSync and statSync,
       // and beats concurrent fs/promises.access(cb) via Promise.all().
@@ -408,7 +467,7 @@ class BaseBrowser {
    * @param {AbortSignal} signal
    * @return {Promise}
    */
-  async startExecutable(args, clientId, url, signal) {
+  async startExecutable (args, clientId, url, signal) {
     const exe = this.executable;
     if (!exe) {
       throw new Error('No executable found');
@@ -438,7 +497,7 @@ class BaseBrowser {
     });
   }
 
-  *getCandidates(platform) {
+  * getCandidates (platform) {
     throw new Error('not implemented');
   }
 
@@ -463,7 +522,7 @@ class BaseBrowser {
    * @param {AbortSignal} signal
    * @return {Promise}
    */
-  async launch(clientId, url, signal) {
+  async launch (clientId, url, signal) {
     throw new Error('not implemented');
   }
 
@@ -479,19 +538,19 @@ class BaseBrowser {
    * etc) then this method can be used to tear those down once at the end
    * of the qtap process.
    */
-  async cleanupOnce() {
+  async cleanupOnce () {
   }
 }
 
 class FirefoxBrowser extends BaseBrowser {
-  *getCandidates(platform) {
+  * getCandidates (platform) {
     if (platform === 'darwin') {
       if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
       yield '/Applications/Firefox.app/Contents/MacOS/firefox';
     }
   }
 
-  async launch(clientId, url, signal) {
+  async launch (clientId, url, signal) {
     // Use mkdtemp (instead of only tmpdir) so that multiple qtap procesess don't clash.
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
     // TODO: Launch with --headless.
@@ -502,6 +561,26 @@ class FirefoxBrowser extends BaseBrowser {
       fs.rmSync(profileDir, { recursive: true, force: true });
     }
   }
+}
+
+function makeLogger (defaultChannel, printError, printDebug = null) {
+  function channel (prefix) {
+    return {
+      channel,
+      debug: !printDebug
+        ? function () {}
+        : function debug (messageCode, ...params) {
+          const paramsFmt = params.flat().map(param => util.inspect(param, { colors: false })).join(' ');
+          printDebug(kleur.grey(`[DEBUG] ${prefix}: ${messageCode} ${paramsFmt}`));
+        },
+      warning: function warning (messageCode, ...params) {
+        const paramsFmt = params.flat().map(param => util.inspect(param, { colors: true })).join(' ');
+        printError(kleur.yellow(`[WARNING] ${prefix}: ${messageCode} ${paramsFmt}`));
+      }
+    };
+  }
+
+  return channel(defaultChannel);
 }
 
 /**
@@ -516,7 +595,7 @@ class FirefoxBrowser extends BaseBrowser {
  *  and serve up. Ignored if testing from URLs.
  * @return {number} Exit code. 0 is success, 1 is failed.
  */
-async function run(browser, files, options) {
+async function run (browser, files, options) {
   // TODO: Add support for .json browser description.
   // Or, instead of JSON, it can be an importable JS file.
   // Caller decides what modules to import etc. Inspired by ESLint FlatConfig.

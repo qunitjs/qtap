@@ -18,13 +18,18 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "lint": "eslint --cache .",
+    "lint-fix": "eslint --cache --fix .",
+    "test": "npm run -s lint"
   },
   "dependencies": {
+    "@tapjs/tap-finished": "^0.0.3",
     "commander": "12.1.0",
     "kleur": "^4.1.5"
   },
   "devDependencies": {
-    "qunit": "^2.21.0"
+    "eslint": "^8.13.0",
+    "eslint-config-semistandard": "^17.0.0",
+    "semistandard": "^17.0.0"
   }
 }
