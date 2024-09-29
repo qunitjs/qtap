@@ -1,15 +1,11 @@
 'use strict';
 
-import cp from 'node:child_process';
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import stream from 'node:stream';
-import util from 'node:util';
 
-import kleur from 'kleur';
 import tapFinished from '@tapjs/tap-finished';
 
 const MIME_TYPES = {
@@ -29,16 +25,14 @@ const MIME_TYPES = {
   ttf: 'font/sfnt',
   txt: 'text/plain; charset=utf-8',
   woff2: 'application/font-woff2',
-  woff: 'font/woff'
+  woff: 'font/woff',
 };
 
 class ControlServer {
-  static nextServerId = 0;
+  static nextServerId = 1;
   static nextClientId = 1;
 
   constructor (root, testFile, logger) {
-    this.constructor.nextServerId++;
-
     if (!root) {
       // For `qtap test/index.html`, default root to cwd.
       root = process.cwd();
@@ -53,7 +47,7 @@ class ControlServer {
     this.root = root;
     this.testFile = testFile;
     this.browsers = new Map();
-    this.logger = logger.channel('qtap_server_' + this.constructor.nextServerId);
+    this.logger = logger.channel('qtap_server_' + this.constructor.nextServerId++);
     // Optimization: Prefetch test file in parallel with http.Server#listen.
     this.testFilePromise = this.fetchTestFile(this.testFile);
 
@@ -278,9 +272,10 @@ class ControlServer {
     // - [minimal|default in interactive mode]
     //   out> Testing /test/index.html
     //   out>
-    //   out> [Firefox client_1] [blue *spinner] Running test 40.
-    //   out> [Chromium client_2] [grey] [star] [grey] Launching...
-    //   out> [Safari client_3] [grey] [star] [grey] Launching...
+    //   out> Firefox    : SPINNER [blue]
+    //   out>              Running test 40.
+    //   out> [Chromium] : [grey] [star] [grey] Launching...
+    //   out> [Safari]   : [grey] [star] [grey] Launching...
     //   -->
     //   out> Testing /test/index.html
     //   out>
@@ -424,289 +419,4 @@ class ControlServer {
   }
 }
 
-class BaseBrowser {
-  static getBrowser (name, logger) {
-    const localBrowsers = {
-      firefox: FirefoxBrowser,
-      safari: [],
-      chromium: [],
-      chrome: [],
-      edge: []
-    };
-
-    // --no-sandbox CHROMIUM_FLAGS
-    // Refer to karma launchers.
-    // Refer to airtap.
-    // Refer to puppeteer.
-    // Refer to playwright (Firefox, Safari).
-
-    // TODO: Deal with one-time shared setup across browser of the same provider.
-    // to setup browserstack tunnel once, and then tear it down at some point.
-    // Refer to karma browser launcher. Maybe just a process-level flag to track
-    // the "nonce"/semaphore that it is done for the setup, lazily. Easy enough?
-
-    // What about shutdown? Do we start it in a way that doesn't hold up the Node
-    // process and then hope to tie into process.on('exit') to quckly clean it up,
-    // risk zombie process. Or an official cleanup(), but then how do we ensure
-    // it is only called once. function identity in an ES6 Set(), that qunit-browser
-
-    logger.debug('get_browser', name);
-    const Browser = localBrowsers[name];
-    if (!Browser) {
-      throw new Error('Unknown browser name ' + name);
-    }
-    return new Browser(logger);
-  }
-
-  constructor (logger) {
-    this.logger = logger.channel('qtap_browser_' + this.constructor.name);
-    this.executable = this.getExecutable(process.platform);
-  }
-
-  getExecutable (platform) {
-    for (const candidate of this.getCandidates(platform)) {
-      // Optimization: Use fs.existsSync. It is on par with accessSync and statSync,
-      // and beats concurrent fs/promises.access(cb) via Promise.all().
-      // Starting the promise chain alone takes the same time as a loop with
-      // 5x existsSync(), not even counting the await and boilerplate to manage it all.
-      this.logger.debug('exe_candidate', candidate);
-      if (fs.existsSync(candidate)) {
-        this.logger.debug('exe_candidate_found');
-        return candidate;
-      }
-    }
-    this.logger.debug('exe_found_none');
-  }
-
-  /**
-   * @param {string[]} args
-   * @param {string} clientId
-   * @param {string} url
-   * @param {AbortSignal} signal
-   * @return {Promise}
-   */
-  async startExecutable (args, clientId, url, signal) {
-    const exe = this.executable;
-    if (!exe) {
-      throw new Error('No executable found');
-    }
-    const logger = this.logger.channel(`qtap_browser-${this.constructor.name}-${clientId}`);
-
-    logger.debug('exe_start', exe, args);
-    const spawned = cp.spawn(exe, args, { signal });
-
-    return new Promise((resolve, reject) => {
-      spawned.on('error', error => {
-        if (signal.aborted) {
-          resolve();
-        } else {
-          logger.debug('exe_error', error);
-          reject(error);
-        }
-      });
-      spawned.on('exit', (code, sig) => {
-        logger.debug('exe_exit', code, sig);
-        if (!signal.aborted) {
-          reject(new Error(`Exit code code=${code} signal=${sig}`));
-        } else {
-          resolve();
-        }
-      });
-    });
-  }
-
-  * getCandidates (platform) {
-    throw new Error('not implemented');
-  }
-
-  /**
-   * A browser is responsible for knowing whether the process failed to
-   * launch or spawn, and whether it exited unexpectedly.
-   *
-   * A browser is not responsible for knowing whether it succeeded in
-   * navigating to the given URL.
-   *
-   * It is the responsiblity of ControlServer to call controller.abort(),
-   * if it believes the browser has likely failed to load the start URL
-   * (e.g. a reasonable timeout if a browser has not sent its first TAP
-   * message, or has not sent anything else for a while).
-   *
-   * If a browser exits on its own (i.e. ControlServer did not call
-   * controller.abort), then start() should throw an Error or reject its
-   * returned Promise.
-   *
-   * @param {string} clientId
-   * @param {string} url
-   * @param {AbortSignal} signal
-   * @return {Promise}
-   */
-  async launch (clientId, url, signal) {
-    throw new Error('not implemented');
-  }
-
-  /**
-   * Clean up any shared resources.
-   *
-   * The same browser may start() several times concurrently in order
-   * to test multiple URLs. In general, anything started or created
-   * by start() should also be stopped or otherwise cleaned up by start().
-   *
-   * If you lazy-create any shared resources (such as a tunnel connection
-   * for a cloud browser provider, a server or other socket, a cache directory,
-   * etc) then this method can be used to tear those down once at the end
-   * of the qtap process.
-   */
-  async cleanupOnce () {
-  }
-}
-
-class FirefoxBrowser extends BaseBrowser {
-  * getCandidates (platform) {
-    if (platform === 'darwin') {
-      if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
-      yield '/Applications/Firefox.app/Contents/MacOS/firefox';
-    }
-  }
-
-  async launch (clientId, url, signal) {
-    // Use mkdtemp (instead of only tmpdir) so that multiple qtap procesess don't clash.
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
-    // TODO: Launch with --headless.
-    const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
-    try {
-      await this.startExecutable(args, clientId, url, signal);
-    } finally {
-      fs.rmSync(profileDir, { recursive: true, force: true });
-    }
-  }
-}
-
-function makeLogger (defaultChannel, printError, printDebug = null) {
-  function channel (prefix) {
-    return {
-      channel,
-      debug: !printDebug
-        ? function () {}
-        : function debug (messageCode, ...params) {
-          const paramsFmt = params.flat().map(param => util.inspect(param, { colors: false })).join(' ');
-          printDebug(kleur.grey(`[${prefix}] ${messageCode} ${paramsFmt}`));
-        },
-      warning: function warning (messageCode, ...params) {
-        const paramsFmt = params.flat().map(param => util.inspect(param, { colors: true })).join(' ');
-        printError(kleur.yellow(`[${prefix}] WARNING ${messageCode} ${paramsFmt}`));
-      }
-    };
-  }
-
-  return channel(defaultChannel);
-}
-
-/**
- * @param {string} browser One or more comma-separated local browser names,
- *  or path starting with "./" to a JSON file.
- * @param {string[]} files Files and/or URLs.
- * @param {Object} [options]
- * @param {boolean} [options.debug=false]
- * @param {Function} [options.printInfo=console.log]
- * @param {Function} [options.printError=console.error]
- * @param {string} [options.root=process.cwd()] Root directory to find files in
- *  and serve up. Ignored if testing from URLs.
- * @return {number} Exit code. 0 is success, 1 is failed.
- */
-async function run (browser, files, options) {
-  // TODO: Add support for .json browser description.
-  // Or, instead of JSON, it can be an importable JS file.
-  // Caller decides what modules to import etc. Inspired by ESLint FlatConfig.
-  const browserNames = browser.startsWith('./')
-    ? JSON.parse(fs.readFileSync(browser))
-    : browser.split(',');
-  const logger = makeLogger(
-    'qtap_main',
-    options.printError || console.error,
-    options.debug ? console.error : null
-  );
-
-  // reporter = reporter || new TapReporter();
-  // const expect = 'verbose' ? NaN : (urls.length * browsers.length);
-  // TODO: Implement optional plan() method
-  // reporter.plan(expect);
-
-  const servers = [];
-  for (const file of files) {
-    servers.push(new ControlServer(options.root, file, logger));
-  }
-
-  // Don't await launchBrowser() now, since each returns a Promise that will
-  // not settle until the browser exists. Run concurrently, so add first,
-  // then await afterwards.
-  const browsers = [];
-  const browserLaunches = [];
-  for (const browserName of browserNames) {
-    const browser = BaseBrowser.getBrowser(browserName, logger);
-    browsers.push(browser);
-    for (const server of servers) {
-      browserLaunches.push(server.launchBrowser(browser));
-    }
-  }
-
-  try {
-    // Instead of explicitly exiting here, wait for everything to settle (success
-    // and failure alike), and then stop/clean everything so that we can let
-    // Node.js naturally exit.
-    // TODO: Why? Just await and then forcefully quit, if that's faster?
-    // Do we miss out on some hidden clean up if we just await and then return,
-    // and call process.exit() in qtap.js?
-    await Promise.allSettled(browserLaunches);
-    // Await again, so that any error gets thrown accordingly,
-    // we don't do this directly because we first want to wait for all tests
-    // to complete, success success and failures alike.
-    for (const launched of browserLaunches) {
-      await launched;
-    }
-  } finally {
-    // Avoid dangling browser processes. Even if the above throws,
-    // make sure we  let each server exit (TODO: Why?)
-    // and let each browser do clean up (OK, this is useful, rm tmpdir,
-    // excpet no, we already take care of that via launch/finallly, unless
-    // process.exit bypasses that?)
-    for (const server of servers) {
-      server.close();
-    }
-    for (const browser of browsers) {
-      await browser.cleanupOnce();
-    }
-  }
-
-  // TODO: Return exit status, to ease programmatic use and testing.
-  // TODO: Add parameter for stdout used by reporters.
-}
-
-export default {
-  run
-};
-
-/*
-    req.onreadystatechange = function () {
-      if (req.readyState==4)
-        cb(req.responseText);
-    };
-    var data;
-    if(window.CircularJSON) {
-      data = window.CircularJSON.stringify(json);
-    } else {
-      data = JSON.stringify(json);
-    }
-    req.open("POST", url, true);
-    req.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
-    req.setRequestHeader('X-Browser-String', BrowserStack.browser_string);
-    req.setRequestHeader('X-Worker-UUID', BrowserStack.worker_uuid);
-    req.setRequestHeader('Content-type', 'application/json');
-    req.send(data);
-  }
-*/
-// const urls = program.args.map(
-//   (file) => ( file.startsWith('http:') || file.startsWith('https:') )
-//     ? file
-//     // expand relative to this.root and format as file:/// URL
-//     : url.pathToFileURL(file).toString()
-// );
+export { ControlServer };

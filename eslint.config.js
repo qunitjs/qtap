@@ -10,5 +10,10 @@ const compat = new FlatCompat({
 });
 
 export default [
-  ...compat.extends('eslint-config-semistandard')
+  ...compat.extends('eslint-config-semistandard'),
+  {
+    rules: {
+      'comma-dangle': 'off',
+    }
+  }
 ];

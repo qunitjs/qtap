@@ -2,7 +2,7 @@
 'use strict';
 
 import { program } from 'commander';
-import qtap from '../index.js';
+import qtap from '../src/qtap.js';
 
 program
   .name('qtap')
