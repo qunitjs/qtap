@@ -1,22 +1,16 @@
 'use strict';
 
+import cp from 'node:child_process';
 import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import http from 'node:http';
-import path from 'node:path';
-import util from 'node:util';
 import os from 'node:os';
-import cp from 'node:child_process';
+import path from 'node:path';
+import stream from 'node:stream';
+import util from 'node:util';
 
 import kleur from 'kleur';
-
 import tapFinished from '@tapjs/tap-finished';
-
-console.log(tapFinished);
-
-// TODO: Merge TAP streams from browsers into one unified output
-// import TapReporter from '../src/reporters/TapReporter.mjs';
-// TODO: tap-parser? TapReporter?
 
 const MIME_TYPES = {
   bin: 'application/octet-stream',
@@ -39,34 +33,32 @@ const MIME_TYPES = {
 };
 
 class ControlServer {
-  static nextServerId = 1;
+  static nextServerId = 0;
   static nextClientId = 1;
-  testFile;
-  browsers;
-  testFilePromise;
-  proxyBase;
-  proxyBasePromise;
 
   constructor (root, testFile, logger) {
+    this.constructor.nextServerId++;
+
     if (!root) {
       // For `qtap test/index.html`, default root to cwd.
       root = process.cwd();
-      // FOr `qtap ../foobar/test/index.html`, default root to ../foobar.
       const relPath = path.relative(root, path.join(root, testFile));
       const parent = relPath.match(/^[./\\]+/)?.[0];
+      // For `qtap ../foobar/test/index.html`, default root to ../foobar.
       if (parent) {
         root = path.join(root, parent);
       }
     }
+
     this.root = root;
     this.testFile = testFile;
-    // Prefetching the test file in parallel with http.Server#listen.
-    this.testFilePromise = this.fetchTestFile(this.testFile);
     this.browsers = new Map();
-    this.logger = logger.channel('qtap_server-' + this.constructor.nextServerId);
-    this.constructor.nextServerId++;
+    this.logger = logger.channel('qtap_server_' + this.constructor.nextServerId);
+    // Optimization: Prefetch test file in parallel with http.Server#listen.
+    this.testFilePromise = this.fetchTestFile(this.testFile);
 
     const server = http.createServer();
+    this.proxyBase = null;
     this.proxyBasePromise = new Promise((resolve) => {
       server.on('listening', () => {
         this.proxyBase = 'http://localhost:' + server.address().port;
@@ -80,7 +72,6 @@ class ControlServer {
      * @param {node:http.ServerResponse} resp
      */
     server.on('request', async (req, resp) => {
-      // Extract path and query parameters
       try {
         const url = new URL(this.proxyBase + req.url);
         this.logger.debug('request_url', req.url);
@@ -104,6 +95,7 @@ class ControlServer {
       this.logger.debug('http_close');
       server.close();
       server.closeAllConnections();
+      // Strictly "call only once"
       this.close = null;
     };
   }
@@ -119,43 +111,55 @@ class ControlServer {
   async getTestFile (clientId) {
     /* eslint-disable no-undef -- Browser code */
     const qtapInitFunctionStr = function qtapInit () {
-      // Support QUnit 2.16 - 2.22: Enable TAP reporter ourselves.
-      // In QUnit 3.0+ this happens automatically with qunit_config_reporters_tap.
+      // Support QUnit 2.16 - 2.22: Enable TAP reporter.
+      // In QUnit 3.0+, we do this declaratively qunit_config_reporters_tap.
       if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
         QUnit.reporters.tap.init(QUnit);
       }
 
       let qtapBuffer = '';
-      let qtapTimeout;
+      let qtapSendNext = true;
       const qtapConsoleLog = console.log;
 
       function qtapSend () {
-        const xhr = new XMLHttpRequest();
-        xhr.open(
-          'POST',
-          '{{QTAP_URL}}',
-          true
-        );
-        xhr.send(qtapBuffer);
+        const body = qtapBuffer;
         qtapBuffer = '';
-        qtapTimeout = null;
+        qtapSendNext = false;
+
+        const xhr = new XMLHttpRequest();
+        xhr.onload = xhr.onerror = () => {
+          qtapSendNext = true;
+          if (qtapBuffer) {
+            qtapSend();
+          }
+        };
+        xhr.open('POST', '{{QTAP_URL}}', true);
+        xhr.send(body);
       }
 
       console.log = function qtapLog (str) {
         if (typeof str === 'string') {
           qtapBuffer += str + '\n';
-          if (!qtapTimeout) {
-            // TODO: Determine if order of consecutive XHR can be assumed.
-            // If not, then either include an order query parameter, or
-            // debounce it such that each flush wants for XHR onload,
-            // thus naturally avoiding ordering issues and naturally
-            // speeding up or slowing down the flush interval.
-            // Downside: This "dynamic" interval willl 2x the amount it
-            // should be since it relies on roundtrip.
-            // In summary, we'd switch from a fixed "debounce" (trailing send)
-            // to dynamic "throttle" (leading send).
-            // This has the benefit of fast initial progress, which is nice.
-            qtapTimeout = setTimeout(qtapSend, 100);
+          // Considerations:
+          // - Fixed debounce, e.g. setTimeout(send,200).
+          //   Downside: Delays first response by 200ms. And server could
+          //   receive out-of-order, thus requires an ordering mechanism.
+          // - Fixed throttle, e.g. send(), setTimeout(..,200).
+          //   Downside: First response is just "TAP version" and first real
+          //   result still delayed by 200ms. Plus, out-of-order concern.
+          // - send() now + XHR.onload to dictate when to send the next buffer.
+          //   This "dynamic" interval is in theory slower than needed, by waiting
+          //   for full RTT instead of only receipt, but receipt is unknowable.
+          //   In practice this is quicker than anything else, and avoids concerns.
+          //   Downside: First response is still just "TAP version".
+          // Actual:
+          // - setTimeout(send,0) now + XHR.onload to dictate frequency.
+          //   The first chunk will include everything from the same synchronous
+          //   chunk executed by test runner, thus at least one real result.
+          //   Waiting for XHR.onload is naturally ordered, and optimal throttling.
+          if (qtapSendNext) {
+            qtapSendNext = false;
+            setTimeout(qtapSend, 0);
           }
         }
         return qtapConsoleLog.apply(this, arguments);
@@ -245,20 +249,21 @@ class ControlServer {
       body += data;
     });
     req.on('end', () => {
-      this.logger.debug('browser_tap', body.slice(0, 10) + '…');
-      console.log(body);
+      // Support QUnit 2.x: Strip escape sequences for tap-parser and tap-finished.
+      // Fixed in QUnit 3.0 with https://github.com/qunitjs/qunit/pull/1801.
+      // eslint-disable-next-line no-control-regex
+      body = body.replace(/\x1b\[[0-9]+m/g, '');
+      const clientId = url.searchParams.get('qtap_clientId');
+      this.logger.debug('browser_tap', clientId, body.slice(0, 10) + '…' + body.slice(-10));
+      const browser = this.browsers.get(clientId);
+      if (browser) {
+        browser.readableController.enqueue(body);
+      }
     });
     resp.writeHead(204);
     resp.end();
 
-    // TODO: On TAP 'end', call browser.stop();
-    // - clientId
-    // - create read-write stream in launch or lazy-create here
-    // - lazy call tapFinished() once and pipe stream to it
-    //   with callback that browser.stop()'s.
-    // - write body to tap stream
-
-    // TODO: Pipe same stream to one of two options, based on --reporter:
+    // TODO: Pipe to one of two options, based on --reporter:
     // - [tap | default in piped and CI?]: tap-parser + some kind of renumbering or prefixing.
     //   client_1> ok 40 foo > bar
     //   out> ok 1 - qtap > Firefox (client_1) connected! Running test/index.html.
@@ -318,23 +323,6 @@ class ControlServer {
     //   Verbose: Output comment indicatinh browser done, and test runtime.
   }
 
-  // TODO: Move into handleTap, on('end')
-  // TODO: Remove unused.
-  handleStop (req, url, resp) {
-    resp.writeHead(204);
-    resp.end();
-
-    const clientId = url.searchParams.get('qtap_clientId');
-    this.logger.debug('browser_stop', clientId);
-    const browser = this.browsers.get(clientId);
-    if (!browser) {
-      this.logger.warning('browser_already_gone', clientId);
-    } else {
-      browser.controller.abort('qtap requested stop');
-    }
-    this.browsers.delete(clientId);
-  }
-
   /**
    * @param {node:http.ServerResponse} resp
    * @param {number} statusCode
@@ -351,12 +339,45 @@ class ControlServer {
   async launchBrowser (browser) {
     const clientId = 'client_' + this.constructor.nextClientId++;
     const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
-    const stream = new ReadableStream();
+
     const controller = new AbortController();
+
+    let readableController;
+    const readable = new ReadableStream({
+      start (controller) {
+        readableController = controller;
+      }
+    });
+
     this.browsers.set(clientId, {
       controller,
-      stream
+      readableController
     });
+
+    const tapFinishFinder = tapFinished({ wait: 0 }, () => {
+      this.logger.debug('browser_tap_finished', clientId);
+      // Re-retrieve it to prevent races and reduce held references
+      const browserData = this.browsers.get(clientId);
+      if (!browserData) {
+        this.logger.warning('browser_already_gone', clientId);
+      } else {
+        browserData.controller.abort('qtap requested browser stop');
+      }
+      this.browsers.delete(clientId);
+    });
+
+    const readableForFinished = readable;
+    // // Debugging
+    // const [readableForFinished, readeableForParser] = readable.tee();
+    // import('tap-parser').then(function (tapParser) {
+    //   const p = tapParser.default();
+    //   readeableForParser.pipeTo(stream.Writable.toWeb(p));
+    //   p.on('assert', console.log.bind(console, 'assert'));
+    //   p.on('plan', console.log.bind(console, 'plan'));
+    // });
+
+    readableForFinished.pipeTo(stream.Writable.toWeb(tapFinishFinder));
+
     try {
       this.logger.debug('browser_launch', clientId, browser.constructor.name);
       await browser.launch(clientId, url, controller.signal);
@@ -405,9 +426,6 @@ class ControlServer {
 
 class BaseBrowser {
   static getBrowser (name, logger) {
-    const _chromium = [];
-    const _chrome = [];
-    const _edge = [];
     const localBrowsers = {
       firefox: FirefoxBrowser,
       safari: [],
@@ -441,7 +459,7 @@ class BaseBrowser {
   }
 
   constructor (logger) {
-    this.logger = logger.channel('qtap_browser-' + this.constructor.name);
+    this.logger = logger.channel('qtap_browser_' + this.constructor.name);
     this.executable = this.getExecutable(process.platform);
   }
 
@@ -571,11 +589,11 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
         ? function () {}
         : function debug (messageCode, ...params) {
           const paramsFmt = params.flat().map(param => util.inspect(param, { colors: false })).join(' ');
-          printDebug(kleur.grey(`[DEBUG] ${prefix}: ${messageCode} ${paramsFmt}`));
+          printDebug(kleur.grey(`[${prefix}] ${messageCode} ${paramsFmt}`));
         },
       warning: function warning (messageCode, ...params) {
         const paramsFmt = params.flat().map(param => util.inspect(param, { colors: true })).join(' ');
-        printError(kleur.yellow(`[WARNING] ${prefix}: ${messageCode} ${paramsFmt}`));
+        printError(kleur.yellow(`[${prefix}] WARNING ${messageCode} ${paramsFmt}`));
       }
     };
   }
@@ -631,12 +649,26 @@ async function run (browser, files, options) {
     }
   }
 
-  // Wait for results and then stop what whatever we started to let Node.js exit.
   try {
+    // Instead of explicitly exiting here, wait for everything to settle (success
+    // and failure alike), and then stop/clean everything so that we can let
+    // Node.js naturally exit.
+    // TODO: Why? Just await and then forcefully quit, if that's faster?
+    // Do we miss out on some hidden clean up if we just await and then return,
+    // and call process.exit() in qtap.js?
     await Promise.allSettled(browserLaunches);
+    // Await again, so that any error gets thrown accordingly,
+    // we don't do this directly because we first want to wait for all tests
+    // to complete, success success and failures alike.
+    for (const launched of browserLaunches) {
+      await launched;
+    }
   } finally {
     // Avoid dangling browser processes. Even if the above throws,
-    // still let each server exit the browsers it launched
+    // make sure we  let each server exit (TODO: Why?)
+    // and let each browser do clean up (OK, this is useful, rm tmpdir,
+    // excpet no, we already take care of that via launch/finallly, unless
+    // process.exit bypasses that?)
     for (const server of servers) {
       server.close();
     }
@@ -645,9 +677,8 @@ async function run (browser, files, options) {
     }
   }
 
-  // TODO: Return exit status
-  // TODO: Allow controlling where stdout goes
-  // TODO: Allow controlling if setting exit status or not, e.g. when used progammatically.
+  // TODO: Return exit status, to ease programmatic use and testing.
+  // TODO: Add parameter for stdout used by reporters.
 }
 
 export default {
