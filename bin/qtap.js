@@ -38,7 +38,7 @@ program
     3000
   )
   .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
-  .option('-v, --verbose', 'Enable verbose debugging.')
+  .option('-v, --verbose', 'Enable verbose debug logging.')
   .option('-V, --version', 'Display version number.')
   .helpOption('-h, --help', 'Display this usage information.')
   .parse(process.argv);
@@ -57,7 +57,7 @@ if (opts.version) {
     const exitCode = await qtap.run(opts.browser, program.args, {
       config: opts.config,
       timeout: opts.timeout,
-      debug: opts.verbose
+      verbose: opts.verbose
     });
     process.exit(exitCode);
   } catch (e) {

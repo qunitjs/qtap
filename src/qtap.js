@@ -37,7 +37,7 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
  * @param {Object} [options]
  * @param {string} [options.config] Path to JS file that exports additional browsers.
  *  User controls how and what modules to import there. Inspired by ESLint FlatConfig.
- * @param {boolean} [options.debug=false]
+ * @param {boolean} [options.verbose=false]
  * @param {Function} [options.printInfo=console.log]
  * @param {Function} [options.printError=console.error]
  * @param {string} [options.root=process.cwd()] Root directory to find files in
@@ -48,7 +48,7 @@ async function run (browserNames, files, options) {
   const logger = makeLogger(
     'qtap_main',
     options.printError || console.error,
-    options.debug ? console.error : null
+    options.verbose ? console.error : null
   );
 
   const servers = [];

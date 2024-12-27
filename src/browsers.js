@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
+
 class LocalBrowser {
   constructor (logger) {
     this.executable = null;
@@ -130,10 +132,13 @@ class FirefoxBrowser extends LocalBrowser {
   }
 
   async launch (clientId, url, signal, logger) {
+    // TODO: Move mkdtemp to LocalBrowser.
     // Use mkdtemp (instead of only tmpdir) so that multiple qtap procesess don't clash.
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
-    // TODO: Launch with --headless.
     const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
+    if (!QTAP_DEBUG) {
+      args.push('-headless');
+    }
     try {
       await this.startExecutable(args, clientId, url, signal, logger);
     } finally {

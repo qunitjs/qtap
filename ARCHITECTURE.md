@@ -2,6 +2,16 @@
 
 We've documented our design goals, values, assumptions and considered alternatives, and any significant caveats or intentional trade-offs encountered during development.
 
+## Debugging
+
+### Debug logs
+
+Set `--verbose` to enable verbose debug logging.
+
+### Debug launch
+
+Set `QTAP_DEBUG=1` to launch local browsers visibly instead of headless.
+
 ## Client buffer
 
 Source code: [function qtapClientHead](./src/server.js#170).
