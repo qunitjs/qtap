@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 'use strict';
 
-import { program } from 'commander';
+import { program, InvalidArgumentError } from 'commander';
 import qtap from '../src/qtap.js';
+
+const optionBrowserDefault = ['firefox'];
 
 program
   .name('qtap')
@@ -10,17 +12,35 @@ program
   .description('Run unit tests in real browsers', {
     file: 'One or more local HTML files or URLs'
   })
-  .arguments('<file...>')
+  .argument('<file...>')
   .option('-b, --browser <name>',
-    'One or more comma-separated local browser names, or ./path to a JSON file.\n' +
-      'Choices: "firefox", "chrome", "safari"\n' +
-      'Example: "firefox,chrome"\n' +
-      'Default: "firefox"'
+    'One or more browser names.\n'
+       + 'Available: firefox, chrome, safari.',
+       (val, list) => {
+        if (list === optionBrowserDefault) {
+          // https://github.com/tj/commander.js/issues/1641
+          return [val];
+        }
+        return list.concat(val);
+      },
+      optionBrowserDefault
   )
-  .option('-w, --watch', 'Watch files for changes and re-run the test suite')
-  .option('-v, --verbose', 'Enable verbose debugging')
-  .option('-V, --version', 'Display version number')
-  .helpOption('-h, --help', 'Display this usage information')
+  .option('-c, --config <file>', 'Optional config file to define additional browsers.')
+  .option('--timeout <number>', 'Fail if a browser is quiet for this long '
+    + 'before or between results,\nin millseconds.',
+    function (val) {
+      val = Number(val);
+      if (val < 0 || !Number.isFinite(val)) {
+        throw new InvalidArgumentError('Not a number.');
+      }
+      return val;
+    },
+    3000
+  )
+  .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
+  .option('-v, --verbose', 'Enable verbose debugging.')
+  .option('-V, --version', 'Display version number.')
+  .helpOption('-h, --help', 'Display this usage information.')
   .parse(process.argv);
 
 const opts = program.opts();
@@ -34,7 +54,9 @@ if (opts.version) {
   program.help();
 } else {
   try {
-    const exitCode = await qtap.run(opts.browser || 'firefox', program.args, {
+    const exitCode = await qtap.run(opts.browser, program.args, {
+      config: opts.config,
+      timeout: opts.timeout,
       debug: opts.verbose
     });
     process.exit(exitCode);
@@ -45,32 +67,7 @@ if (opts.version) {
 }
 
 /**
- * --browser  dotless = comma-separated names
- *            Default: firefox (all are headless, open the file yourself for non-headless)
- *            Options:
- *            - firefox
- *            - chrome (chrome+chromium+edge)
- *            - chromium (chromium+chrome+edge)
- *            - edge (edge+chrome+chromium)
- *            - safari
- *            - browserstack/firefox_45
- *            - browserstack/firefox_previous
- *            - browserstack/firefox_current,
- *            - ["browserstack", {
- *                 "browser": "opera",
- *                 "browser_version": "36.0",
- *                 "device": null,
- *                 "os": "OS X",
- *                 "os_version": "Sierra"
- *              ]
- *            - saucelabs
- *            - puppeteer
- *            - puppeteer_coverage { outputDir: instanbul }
- *            // TODO: integration test with nyc as example with console+html output
- *
- * --file  local file path or URL
- *
- * --concurrency=Infinity Always on? Responsibility of OS for sytem browsers
+ * TODO: --concurrency=Infinity Always on? Responsibility of OS for sytem browsers
  *  to manage resources and figure it out, most cases will have 1 file and 1-3 browsers.
  *  likely reasons to want to limit it:
  *   - test file served from an app that cannot handle ANY concurrency.
@@ -80,4 +77,9 @@ if (opts.version) {
  *    will queue but in practice may fail/throttle hard?
  *    solution: browserstack just queues, no problem.
  *    saucelabs? TBD.
+ *    If problematic, perhaps make it the qtap-plugin responsiblity
+ *    that adds support for one of these cloud browsers, with a reasonable
+ *    default and a dedicated env var to change it (e.g. QTAP_SAUCELABS_CONCURRENCY
+ *    or SAUCELABS_CONCURRENCY), without needing qtap itself to have a global
+ *    CLI parameter.
  */

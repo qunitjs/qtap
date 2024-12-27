@@ -5,58 +5,22 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-class Browser {
-  static getBrowser (name, logger) {
-    const localBrowsers = {
-      firefox: FirefoxBrowser,
-      safari: [],
-      chromium: [],
-      chrome: [],
-      edge: [],
-    };
-
-    // --no-sandbox CHROMIUM_FLAGS
-    // Refer to karma launchers.
-    // Refer to airtap.
-    // Refer to puppeteer.
-    // Refer to playwright (Firefox, Safari).
-
-    // TODO: Deal with one-time shared setup across browser of the same provider.
-    // to setup browserstack tunnel once, and then tear it down at some point.
-    // Refer to karma browser launcher. Maybe just a process-level flag to track
-    // the "nonce"/semaphore that it is done for the setup, lazily. Easy enough?
-
-    // What about shutdown? Do we start it in a way that doesn't hold up the Node
-    // process and then hope to tie into process.on('exit') to quckly clean it up,
-    // risk zombie process. Or an official cleanup(), but then how do we ensure
-    // it is only called once. function identity in an ES6 Set(), that qunit-browser
-
-    logger.debug('get_browser', name);
-    const Browser = localBrowsers[name];
-    if (!Browser) {
-      throw new Error('Unknown browser name ' + name);
-    }
-    return new Browser(logger);
-  }
-
+class LocalBrowser {
   constructor (logger) {
-    this.logger = logger.channel('qtap_browser_' + this.constructor.name);
-    this.executable = this.getExecutable(process.platform);
-  }
+    this.executable = null;
 
-  getExecutable (platform) {
-    for (const candidate of this.getCandidates(platform)) {
+    for (const candidate of this.getCandidates(process.platform)) {
+      logger.debug('browser_exe_check', candidate);
       // Optimization: Use fs.existsSync. It is on par with accessSync and statSync,
       // and beats concurrent fs/promises.access(cb) via Promise.all().
       // Starting the promise chain alone takes the same time as a loop with
       // 5x existsSync(), not even counting the await and boilerplate to manage it all.
-      this.logger.debug('exe_candidate', candidate);
       if (fs.existsSync(candidate)) {
-        this.logger.debug('exe_candidate_found');
-        return candidate;
+        logger.debug('browser_exe_found');
+        this.executable = candidate;
+        break;
       }
     }
-    this.logger.debug('exe_found_none');
   }
 
   /**
@@ -66,30 +30,44 @@ class Browser {
    * @param {AbortSignal} signal
    * @return {Promise}
    */
-  async startExecutable (args, clientId, url, signal) {
+  async startExecutable (args, clientId, url, signal, logger) {
     const exe = this.executable;
     if (!exe) {
       throw new Error('No executable found');
     }
-    const logger = this.logger.channel(`qtap_browser-${this.constructor.name}-${clientId}`);
 
-    logger.debug('exe_start', exe, args);
+    logger.debug('browser_exe_spawn', exe, args);
     const spawned = cp.spawn(exe, args, { signal });
+
+    let stdout = '';
+    let stderr = '';
+    spawned.stdout.on('data', data => {
+      stdout += data;
+    });
+    spawned.stderr.on('data', data => {
+      stderr += data;
+    });
 
     return new Promise((resolve, reject) => {
       spawned.on('error', error => {
         if (signal.aborted) {
           resolve();
         } else {
-          logger.debug('exe_error', error);
+          logger.debug('browser_exe_error', error);
           reject(error);
         }
       });
       spawned.on('exit', (code, sig) => {
-        logger.debug('exe_exit', code, sig);
+        const indent = (str) => str.trim().split('\n').map(line => '    ' + line).join('\n');
+        let details = 'Process exited'
+          + `\n  exit code: ${code}`
+          + (sig ? `\n  signal: ${sig}` : '')
+          + (stderr ? `\n  stderr:\n${indent(stderr)}` : '')
+          + (stdout ? `\n  stdout:\n${indent(stdout)}` : '');
         if (!signal.aborted) {
-          reject(new Error(`Exit code code=${code} signal=${sig}`));
+          reject(new Error(details));
         } else {
+          logger.debug('browser_natural_exit', details);
           resolve();
         }
       });
@@ -119,9 +97,10 @@ class Browser {
    * @param {string} clientId
    * @param {string} url
    * @param {AbortSignal} signal
+   * @param {qtap-Logger} logger
    * @return {Promise}
    */
-  async launch (clientId, url, signal) {
+  async launch (clientId, url, signal, logger) {
     throw new Error('not implemented');
   }
 
@@ -138,10 +117,11 @@ class Browser {
    * of the qtap process.
    */
   async cleanupOnce () {
+    // TODO: Implement cleanupOnce support. Use case: browserstack tunnel.
   }
 }
 
-class FirefoxBrowser extends Browser {
+class FirefoxBrowser extends LocalBrowser {
   * getCandidates (platform) {
     if (platform === 'darwin') {
       if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
@@ -149,20 +129,40 @@ class FirefoxBrowser extends Browser {
     }
   }
 
-  async launch (clientId, url, signal) {
+  async launch (clientId, url, signal, logger) {
     // Use mkdtemp (instead of only tmpdir) so that multiple qtap procesess don't clash.
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
     // TODO: Launch with --headless.
     const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
     try {
-      await this.startExecutable(args, clientId, url, signal);
+      await this.startExecutable(args, clientId, url, signal, logger);
     } finally {
       fs.rmSync(profileDir, { recursive: true, force: true });
     }
   }
 }
 
-export {
-  Browser,
-  FirefoxBrowser,
+export default {
+  firefox: FirefoxBrowser,
+  // TODO: safari: [],
+  // TODO: chromium: [], // chromium+chrome+edge
+  // --no-sandbox CHROMIUM_FLAGS
+
+  // TODO: chrome: [], // chrome+chromium+edge
+  // TODO: edge: [], // edge+chrome+chromium
+  // TODO: browserstack
+  // - browserstack/firefox_45
+  // - browserstack/firefox_previous
+  // - browserstack/firefox_current,
+  // - ["browserstack", {
+  //      "browser": "opera",
+  //      "browser_version": "36.0",
+  //      "device": null,
+  //      "os": "OS X",
+  //      "os_version": "Sierra"
+  //   ]
+  // TODO: saucelabs
+  // TODO: puppeteer
+  // TODO: puppeteer_coverage { outputDir: instanbul }
+  // TODO: integration test with nyc as example with console+html output
 };

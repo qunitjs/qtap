@@ -6,6 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import stream from 'node:stream';
 
+import TapParser from 'tap-parser';
 import tapFinished from '@tapjs/tap-finished';
 
 const MIME_TYPES = {
@@ -56,7 +57,7 @@ class ControlServer {
     this.proxyBasePromise = new Promise((resolve) => {
       server.on('listening', () => {
         this.proxyBase = 'http://localhost:' + server.address().port;
-        this.logger.debug('listening', this.proxyBase, this.testFile);
+        this.logger.debug('server_listening', `Serving ${this.testFile} at ${this.proxyBase}`);
         resolve(this.proxyBase);
       });
     });
@@ -102,27 +103,86 @@ class ControlServer {
       : (await fsPromises.readFile(file)).toString();
   }
 
+  async launchBrowser (browser, browserName) {
+    const clientId = 'client_' + this.constructor.nextClientId++;
+    const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
+    const logger = this.logger.channel(`qtap_browser_${browserName}_${clientId}`);
+
+    const controller = new AbortController();
+
+    let readableController;
+    const readable = new ReadableStream({
+      start (readableControllerParam) {
+        readableController = readableControllerParam;
+      }
+    });
+
+    this.browsers.set(clientId, {
+      readableController
+    });
+
+    const [readableForFinished, readeableForParser] = readable.tee();
+
+    const tapFinishFinder = tapFinished({ wait: 0 }, () => {
+      logger.debug('browser_tap_finished', 'Requesting browser stop');
+      // Check in case browser already gone (race condition)
+      if (this.browsers.get(clientId)) {
+        this.browsers.delete(clientId);
+        controller.abort('QTap: browser_tap_finished');
+      }
+    });
+    readableForFinished.pipeTo(stream.Writable.toWeb(tapFinishFinder));
+
+    const tapParser = new TapParser();
+    readeableForParser.pipeTo(stream.Writable.toWeb(tapParser));
+    // Also stop on bailout (tap-finished doesn't handle this)
+    tapParser.on('bailout', (reason) => {
+      logger.debug('browser_tap_bailout', reason);
+      // Check in case browser already gone (race condition)
+      if (this.browsers.get(clientId)) {
+        this.browsers.delete(clientId);
+        controller.abort('QTap: browser_tap_bailout');
+      }
+    });
+    // Debugging
+    // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
+    // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
+
+    // TODO: Implement timeout if stream is quiet for too long
+    // --timeout=3000s
+    //    use in getTestFile() as QTAP_TIMEOUT for qunit_config_testtimeout
+    //    use in $something to send an error to reporters and force-quit
+    //    the browser.
+
+    try {
+      logger.debug('browser_launch_start');
+      await browser.launch(clientId, url, controller.signal, logger);
+      logger.debug('browser_launch_ended');
+    } catch (err) {
+      // TODO: Report browser_launch_error to TAP
+      logger.warning('browser_launch_error', err);
+      this.browsers.delete(clientId);
+    }
+  }
+
   async getTestFile (clientId) {
     /* eslint-disable no-undef -- Browser code */
-    const qtapInitFunctionStr = function qtapInit () {
-      // Support QUnit 2.16 - 2.22: Enable TAP reporter.
-      // In QUnit 3.0+, we do this declaratively qunit_config_reporters_tap.
-      if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
-        QUnit.reporters.tap.init(QUnit);
-      }
+    function qtapClientHead () {
+      // Support QUnit 3.0+: Enable TAP reporter, declaratively.
+      window.qunit_config_reporters_tap = true;
 
-      let qtapBuffer = '';
-      let qtapSendNext = true;
-      const qtapConsoleLog = console.log;
-
+      // See ARCHITECTURE.md#client-buffer
+      var qtapNativeLog = console.log;
+      var qtapBuffer = '';
+      var qtapShouldSend = true;
       function qtapSend () {
-        const body = qtapBuffer;
+        var body = qtapBuffer;
         qtapBuffer = '';
-        qtapSendNext = false;
+        qtapShouldSend = false;
 
-        const xhr = new XMLHttpRequest();
+        var xhr = new XMLHttpRequest();
         xhr.onload = xhr.onerror = () => {
-          qtapSendNext = true;
+          qtapShouldSend = true;
           if (qtapBuffer) {
             qtapSend();
           }
@@ -130,43 +190,40 @@ class ControlServer {
         xhr.open('POST', '{{QTAP_URL}}', true);
         xhr.send(body);
       }
-
       console.log = function qtapLog (str) {
         if (typeof str === 'string') {
           qtapBuffer += str + '\n';
-          // Considerations:
-          // - Fixed debounce, e.g. setTimeout(send,200).
-          //   Downside: Delays first response by 200ms. And server could
-          //   receive out-of-order, thus requires an ordering mechanism.
-          // - Fixed throttle, e.g. send(), setTimeout(..,200).
-          //   Downside: First response is just "TAP version" and first real
-          //   result still delayed by 200ms. Plus, out-of-order concern.
-          // - send() now + XHR.onload to dictate when to send the next buffer.
-          //   This "dynamic" interval is in theory slower than needed, by waiting
-          //   for full RTT instead of only receipt, but receipt is unknowable.
-          //   In practice this is quicker than anything else, and avoids concerns.
-          //   Downside: First response is still just "TAP version".
-          // Actual:
-          // - setTimeout(send,0) now + XHR.onload to dictate frequency.
-          //   The first chunk will include everything from the same synchronous
-          //   chunk executed by test runner, thus at least one real result.
-          //   Waiting for XHR.onload is naturally ordered, and optimal throttling.
-          if (qtapSendNext) {
-            qtapSendNext = false;
+          if (qtapShouldSend) {
+            qtapShouldSend = false;
             setTimeout(qtapSend, 0);
           }
         }
-        return qtapConsoleLog.apply(this, arguments);
+        return qtapNativeLog.apply(this, arguments);
       };
-      /* eslint-enable no-undef */
+
+      window.addEventListener('error', function (error) {
+        console.log('Script error: ' + (error.message || 'Unknown error'));
+      });
     }
-      .toString()
-      .replace(/\/\/.+$/gm, '')
-      .replace(/\n|^\s+/gm, ' ')
-      .replace(
-        "'{{QTAP_URL}}'",
-        JSON.stringify(await this.getProxyBase() + '/.qtap/tap/?qtap_clientId=' + clientId)
-      );
+    function qtapClientBody () {
+      // Support QUnit 2.16 - 2.22: Enable TAP reporter, procedurally.
+      if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
+        QUnit.reporters.tap.init(QUnit);
+      }
+    };
+    /* eslint-enable no-undef */
+
+    const proxyBase = await this.getProxyBase();
+    function fnToStr (fn) {
+      return fn
+        .toString()
+        .replace(/\/\/.+$/gm, '')
+        .replace(/\n|^\s+/gm, ' ')
+        .replace(
+          "'{{QTAP_URL}}'",
+          JSON.stringify(proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId)
+        );
+    }
 
     const base = this.isURL(this.testFile)
       ? this.testFile
@@ -190,7 +247,7 @@ class ControlServer {
       /<!doctype[^>]*>/i,
       /^/
     ],
-    (m) => m + `<base href="${this.escapeHTML(base)}"/><script>window.qunit_config_reporters_tap = true;</script>`
+    (m) => m + `<base href="${this.escapeHTML(base)}"/><script>(${fnToStr(qtapClientHead)})();</script>`
     );
 
     html = this.replaceOnce(html, [
@@ -198,7 +255,7 @@ class ControlServer {
       /<\/html>(?![\s\S]*<\/html>)/i,
       /$/
     ],
-    (m) => '<script>(' + qtapInitFunctionStr + ')();</script>' + m
+    (m) => '<script>(' + fnToStr(qtapClientBody) + ')();</script>' + m
     );
 
     return html;
@@ -248,7 +305,7 @@ class ControlServer {
       // eslint-disable-next-line no-control-regex
       body = body.replace(/\x1b\[[0-9]+m/g, '');
       const clientId = url.searchParams.get('qtap_clientId');
-      this.logger.debug('browser_tap', clientId, body.slice(0, 10) + '…' + body.slice(-10));
+      this.logger.debug('browser_tap', clientId, JSON.stringify(body.slice(0, 30) + '…'));
       const browser = this.browsers.get(clientId);
       if (browser) {
         browser.readableController.enqueue(body);
@@ -329,59 +386,6 @@ class ControlServer {
       resp.write((e.stack || String(e)) + '\n');
     }
     resp.end();
-  }
-
-  async launchBrowser (browser) {
-    const clientId = 'client_' + this.constructor.nextClientId++;
-    const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
-
-    const controller = new AbortController();
-
-    let readableController;
-    const readable = new ReadableStream({
-      start (controller) {
-        readableController = controller;
-      }
-    });
-
-    this.browsers.set(clientId, {
-      controller,
-      readableController
-    });
-
-    const tapFinishFinder = tapFinished({ wait: 0 }, () => {
-      this.logger.debug('browser_tap_finished', clientId);
-      // Re-retrieve it to prevent races and reduce held references
-      const browserData = this.browsers.get(clientId);
-      if (!browserData) {
-        this.logger.warning('browser_already_gone', clientId);
-      } else {
-        browserData.controller.abort('qtap requested browser stop');
-      }
-      this.browsers.delete(clientId);
-    });
-
-    const readableForFinished = readable;
-    // // Debugging
-    // const [readableForFinished, readeableForParser] = readable.tee();
-    // import('tap-parser').then(function (tapParser) {
-    //   const p = tapParser.default();
-    //   readeableForParser.pipeTo(stream.Writable.toWeb(p));
-    //   p.on('assert', console.log.bind(console, 'assert'));
-    //   p.on('plan', console.log.bind(console, 'plan'));
-    // });
-
-    readableForFinished.pipeTo(stream.Writable.toWeb(tapFinishFinder));
-
-    try {
-      this.logger.debug('browser_launch', clientId, browser.constructor.name);
-      await browser.launch(clientId, url, controller.signal);
-      this.logger.debug('browser_exit', clientId);
-    } catch (err) {
-      // TODO: Report failure to TAP
-      this.logger.warning('browser_error', err);
-      this.browsers.delete(clientId);
-    }
   }
 
   async getProxyBase () {
