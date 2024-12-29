@@ -14,6 +14,7 @@ export default [
   {
     rules: {
       'comma-dangle': 'off',
+      'operator-linebreak': ['error', 'before'],
     }
   }
 ];

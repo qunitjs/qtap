@@ -16,18 +16,19 @@ program
   .option('-b, --browser <name>',
     'One or more browser names.\n'
        + 'Available: firefox, chrome, safari.',
-       (val, list) => {
-        if (list === optionBrowserDefault) {
-          // https://github.com/tj/commander.js/issues/1641
-          return [val];
-        }
-        return list.concat(val);
-      },
-      optionBrowserDefault
+    (val, list) => {
+      if (list === optionBrowserDefault) {
+        // https://github.com/tj/commander.js/issues/1641
+        return [val];
+      }
+      return list.concat(val);
+    },
+    optionBrowserDefault
   )
   .option('-c, --config <file>', 'Optional config file to define additional browsers.')
-  .option('--timeout <number>', 'Fail if a browser is quiet for this long '
-    + 'before or between results,\nin millseconds.',
+  .option('--timeout <number>',
+    'Fail if a browser is quiet for this long '
+      + 'before or between results,\nin millseconds.',
     function (val) {
       val = Number(val);
       if (val < 0 || !Number.isFinite(val)) {

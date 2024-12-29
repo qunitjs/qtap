@@ -20,13 +20,14 @@
   "scripts": {
     "lint": "eslint --cache .",
     "lint-fix": "eslint --cache --fix .",
-    "test": "npm run -s lint"
+    "test": "bin/qtap.js -v test/pass.html && npm run -s lint"
   },
   "dependencies": {
     "@tapjs/tap-finished": "^0.0.3",
     "commander": "12.1.0",
     "kleur": "^4.1.5",
-    "tap-parser": "^5.4.0"
+    "tap-parser": "^5.4.0",
+    "which": "^5.0.0"
   },
   "devDependencies": {
     "eslint": "^8.13.0",

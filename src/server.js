@@ -29,6 +29,8 @@ const MIME_TYPES = {
   woff: 'font/woff',
 };
 
+const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
+
 class ControlServer {
   static nextServerId = 1;
   static nextClientId = 1;
@@ -154,19 +156,29 @@ class ControlServer {
     //    use in $something to send an error to reporters and force-quit
     //    the browser.
 
+    let signal = controller.signal;
+    if (QTAP_DEBUG) {
+      // Replace with dummy signal that is never aborted
+      signal = (new AbortController()).signal;
+      controller.signal.addEventListener('abort', () => {
+        logger.warning('browser_debugging_abort', 'Keeping browser open for debugging');
+      });
+    }
+
     try {
       logger.debug('browser_launch_start');
-      await browser.launch(clientId, url, controller.signal, logger);
+      await browser.launch(clientId, url, signal, logger);
       logger.debug('browser_launch_ended');
     } catch (err) {
-      // TODO: Report browser_launch_error to TAP
-      logger.warning('browser_launch_error', err);
+      // TODO: Report browser_launch_exit to TAP. Eg. "No executable found"
+      logger.warning('browser_launch_exit', err);
       this.browsers.delete(clientId);
+      throw err;
     }
   }
 
   async getTestFile (clientId) {
-    /* eslint-disable no-undef -- Browser code */
+    /* eslint-disable no-undef, no-var -- Browser code */
     function qtapClientHead () {
       // Support QUnit 3.0+: Enable TAP reporter, declaratively.
       window.qunit_config_reporters_tap = true;
@@ -210,8 +222,8 @@ class ControlServer {
       if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
         QUnit.reporters.tap.init(QUnit);
       }
-    };
-    /* eslint-enable no-undef */
+    }
+    /* eslint-enable no-undef, no-var */
 
     const proxyBase = await this.getProxyBase();
     function fnToStr (fn) {

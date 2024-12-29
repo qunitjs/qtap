@@ -1,6 +1,5 @@
 'use strict';
 
-import fs from 'node:fs';
 import util from 'node:util';
 
 import kleur from 'kleur';
