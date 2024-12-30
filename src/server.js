@@ -167,7 +167,7 @@ class ControlServer {
 
     try {
       logger.debug('browser_launch_start');
-      await browser.launch(clientId, url, signal, logger);
+      await browser.launch(url, signal, logger);
       logger.debug('browser_launch_ended');
     } catch (err) {
       // TODO: Report browser_launch_exit to TAP. Eg. "No executable found"

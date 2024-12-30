@@ -36,13 +36,17 @@ function that returns a Promise.
 
 ```js
 /**
- * @param {string} clientId Identify the given client, e.g. "client_42".
- * @param {string} url HTTP(S) URL that the browser should navigate to.
+ * @param {string} url
+ *  URL that the browser should navigate to, HTTP or HTTPS.
  * @param {AbortSignal} signal
+ *  The launched browser process must be terminated when this signal
+ *  receives an "abort" event. QTap sends the abort event when it finds that
+ *  a test has finished, or if it needs to stop the browser for any other
+ *  reason.
  * @param {qtap-Logger} logger
  * @return {Promise}
  */
-launch(clientId, url, signal, logger);
+launch(url, signal, logger);
 ```
 
 The browser is then registered in one of three ways:
@@ -55,7 +59,7 @@ The browser is then registered in one of three ways:
 
 ```js
 const browserObj = {
-  async launch(clientId, url, signal, logger) {
+  async launch(url, signal, logger) {
     // open browser
     // navigate to url
     // stop browser when signal sends 'abort' event.
@@ -75,7 +79,7 @@ function browserFn(logger) {
   // ..
 
   return {
-    async launch(url, signal, logger, clientId) {
+    async launch(url, signal, logger) {
       // ...
     }
   };
@@ -93,7 +97,7 @@ class MyBrowser {
     // ...
   }
 
-  async launch(url, signal, logger, clientId) {
+  async launch(url, signal, logger) {
     // ...
   }
 

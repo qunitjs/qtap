@@ -20,7 +20,7 @@
   "scripts": {
     "lint": "eslint --cache .",
     "lint-fix": "eslint --cache --fix .",
-    "test": "bin/qtap.js -v test/pass.html && npm run -s lint"
+    "test": "node bin/qtap.js -v test/pass.html && npm run -s lint"
   },
   "dependencies": {
     "@tapjs/tap-finished": "^0.0.3",

@@ -12,17 +12,21 @@ const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 class LocalBrowser {
   /**
    * @param {string|Array<string|null>|Iterator<string|null>} candidates
-   *  Path to an executable or an iterable of candidate paths to check and use the first one that exists.
-   *  If you need to vary entries by platform or environment variables, it may be easier
-   *  to write your list as a generator function with inline changes as-needed.
+   *  Path to an executable command or an iterable list of candidate paths to
+   *  check and use the first one that exists.
+   *
+   *  If you need to vary list items by platform or environment variables, it may
+   *  be easier to write your list as a generator function with as little or much
+   *  conditional logic around yield statements as-needed.
+   *
    *  See FirefoxBrowser.getCandidates for an example.
-   * @param {Array<string>} args
-   * @param {string} clientId
-   * @param {string} url
+   *
+   * @param {Array<string>} args List of string arguments, passed to child_process.spawn()
+   *  which will automatically quote and escape these.
    * @param {AbortSignal} signal
    * @return {Promise}
    */
-  static async startExecutable (candidates, args, clientId, url, signal, logger) {
+  static async spawn (candidates, args, signal, logger) {
     if (typeof candidates === 'string') {
       candidates = [candidates];
     }
@@ -88,9 +92,9 @@ class LocalBrowser {
    *
    * @returns {string}
    */
-  static mkTempDir(clientId) {
+  static makeTempDir () {
     // Use mkdtemp (instead of only tmpdir) to avoid clash with past or concurrent qtap procesess.
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_'));
   }
 
   /**
@@ -98,10 +102,10 @@ class LocalBrowser {
    *
    * @returns {bool}
    */
-  static isWsl() {
+  static isWsl () {
     try {
       return (
-        process.platform == 'linux'
+        process.platform === 'linux'
         // confirm "Microsoft" (WSL 1) or "microsoft" lowercase (WSL 2)
         && fs.readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft')
         // not in a Podman container
@@ -131,13 +135,12 @@ class LocalBrowser {
    * controller.abort), then start() should throw an Error or reject its
    * returned Promise.
    *
-   * @param {string} clientId
    * @param {string} url
    * @param {AbortSignal} signal
    * @param {qtap-Logger} logger
    * @return {Promise}
    */
-  static async launch (clientId, url, signal, logger) {
+  static async launch (url, signal, logger) {
     throw new Error('not implemented');
   }
 
@@ -170,7 +173,7 @@ class FirefoxBrowser {
       yield '/Applications/Firefox.app/Contents/MacOS/firefox';
     }
 
-    if (process.platform == 'win32') {
+    if (process.platform === 'win32') {
       if (process.env.PROGRAMFILES) yield process.env.PROGRAMFILES + '\\Mozilla Firefox\\firefox.exe';
       if (process.env['PROGRAMFILES(X86)']) yield process.env['PROGRAMFILES(X86)'] + '\\Mozilla Firefox\\firefox.exe';
       yield 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
@@ -188,8 +191,8 @@ class FirefoxBrowser {
     return js;
   }
 
-  async launch (clientId, url, signal, logger) {
-    const profileDir = LocalBrowser.mkTempDir(clientId);
+  async launch (url, signal, logger) {
+    const profileDir = LocalBrowser.makeTempDir();
     const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
     if (!QTAP_DEBUG) {
       args.push('-headless');
@@ -231,7 +234,7 @@ class FirefoxBrowser {
     }));
 
     try {
-      await LocalBrowser.startExecutable(this.getCandidates(), args, clientId, url, signal, logger);
+      await LocalBrowser.spawn(this.getCandidates(), args, signal, logger);
     } finally {
       fs.rmSync(profileDir, { recursive: true, force: true });
     }
