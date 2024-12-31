@@ -109,8 +109,9 @@ Alternatives considered:
     };
   ```
 
-  What remains unaddressed here is avoiding dangling processes in the case of errors between internal process spawning and the returning of the `stop` function. It places a high responsibility on downstream to catch any and all errors there. It also leave some abiguity over the meaning of uncaught errors and how to convey errors or unexpected subprocess exists, because the only chance we have to convey these above is when starting the browser. Once the browser has started, and our function has returned to expose the `stop`, we have no communication path.* A single browser launch function, using an async/Promise to track
-  the lifetime of the browser procoess, and an injected AbortSignal.
+  What remains unaddressed here is avoiding dangling processes in the case of errors between internal process spawning and the returning of the `stop` function. It places a high responsibility on downstream to catch any and all errors there. It also leave some abiguity over the meaning of uncaught errors and how to convey errors or unexpected subprocess exists, because the only chance we have to convey these above is when starting the browser. Once the browser has started, and our function has returned to expose the `stop`, we have no communication path.
+
+* **Single async function with AbortSignal**. The browser is an async function that tracks the lifetime of the browser procoess, and is given an AbortSignal for stopping the process.
 
   This is what we ended up with, except it still made the launcher responsible for silencing expected errors/exits after receiving a stop signal. We moved this responsibility to QTap.
 
@@ -174,6 +175,7 @@ Alternatives considered:
 ## QTap Internal: Client ID
 
 The `clientId` is a short string identifying one browser invocation in the current QTap process, e.g. "client_42". The exact format of the string is internal and should not be decoded or parsed.
+
 **Example**: When running QTap with 2 test files (test_a.html, test_b.html) and 2 browsers (Firefox, Chrome), we spawn 4 clients, let's call them "client_1" to "client_4". This identifier is not directly of concern to browser launch functions. It is instead embedded as part the URL that the browser is instructed to navigate to, such as `http://localhost:9412/?qtap_clientId=client_42`.
 
 The URL is responded to by QTap's own internal web server so that it knows which test file to serve, and so that it can inject an inline script that instructs the browser to send TAP lines (from console.log) to the QTap process in a way that is associated with this clientId, so that the QTap process knows which test file and browser the result is from.

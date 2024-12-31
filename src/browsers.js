@@ -9,7 +9,7 @@ import which from 'which';
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 
-class LocalBrowser {
+const LocalBrowser = {
   /**
    * @param {string|Array<string|null>|Iterator<string|null>} candidates
    *  Path to an executable command or an iterable list of candidate paths to
@@ -26,22 +26,23 @@ class LocalBrowser {
    * @param {AbortSignal} signal
    * @return {Promise}
    */
-  static async spawn (candidates, args, signal, logger) {
+  async spawn (candidates, args, signal, logger) {
     if (typeof candidates === 'string') {
       candidates = [candidates];
     }
     let exe;
     for (const candidate of candidates) {
       if (candidate !== null) {
-        logger.debug('browser_exe_check', candidate);
         // Optimization: Use fs.existsSync. It is on par with accessSync and statSync,
         // and beats concurrent fs/promises.access(cb) via Promise.all().
         // Starting the promise chain alone takes the same time as a loop with
         // 5x existsSync(), not even counting the await and boilerplate to manage it all.
         if (fs.existsSync(candidate)) {
-          logger.debug('browser_exe_found');
+          logger.debug('browser_exe_found', candidate);
           exe = candidate;
           break;
+        } else {
+          logger.debug('browser_exe_check', candidate);
         }
       }
     }
@@ -85,24 +86,24 @@ class LocalBrowser {
         }
       });
     });
-  }
+  },
 
   /**
    * Create a new temporary directory and return its name.
    *
    * @returns {string}
    */
-  static makeTempDir () {
+  makeTempDir () {
     // Use mkdtemp (instead of only tmpdir) to avoid clash with past or concurrent qtap procesess.
     return fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_'));
-  }
+  },
 
   /**
    * Detect Windows Subsystem for Linux
    *
    * @returns {bool}
    */
-  static isWsl () {
+  isWsl () {
     try {
       return (
         process.platform === 'linux'
@@ -118,125 +119,95 @@ class LocalBrowser {
       return false;
     }
   }
+};
 
-  /**
-   * A browser is responsible for knowing whether the process failed to
-   * launch or spawn, and whether it exited unexpectedly.
-   *
-   * A browser is not responsible for knowing whether it succeeded in
-   * navigating to the given URL.
-   *
-   * It is the responsiblity of ControlServer to call controller.abort(),
-   * if it believes the browser has likely failed to load the start URL
-   * (e.g. a reasonable timeout if a browser has not sent its first TAP
-   * message, or has not sent anything else for a while).
-   *
-   * If a browser exits on its own (i.e. ControlServer did not call
-   * controller.abort), then start() should throw an Error or reject its
-   * returned Promise.
-   *
-   * @param {string} url
-   * @param {AbortSignal} signal
-   * @param {qtap-Logger} logger
-   * @return {Promise}
-   */
-  static async launch (url, signal, logger) {
-    throw new Error('not implemented');
+function createFirefoxPrefsJs (prefs) {
+  let js = '';
+  for (const key in prefs) {
+    js += 'user_pref("' + key + '", ' + JSON.stringify(prefs[key]) + ');\n';
   }
-
-  /**
-   * Clean up any shared resources.
-   *
-   * The same browser may start() several times concurrently in order
-   * to test multiple URLs. In general, anything started or created
-   * by start() should also be stopped or otherwise cleaned up by start().
-   *
-   * If you lazy-create any shared resources (such as a tunnel connection
-   * for a cloud browser provider, a server or other socket, a cache directory,
-   * etc) then this method can be used to tear those down once at the end
-   * of the qtap process.
-   */
-  // TODO: Implement cleanupOnce support. Use case: browserstack tunnel.
-  // async cleanupOnce () {
-  // }
+  return js;
 }
 
-class FirefoxBrowser {
-  * getCandidates () {
-    if (process.env.FIREFOX_BIN) yield process.env.FIREFOX_BIN;
+function * getFirefoxCandidates () {
+  if (process.env.FIREFOX_BIN) yield process.env.FIREFOX_BIN;
 
-    // Find /usr/bin/firefox on platforms like linux (including WSL), freebsd, openbsd.
-    yield which.sync('firefox', { nothrow: true });
+  // Find /usr/bin/firefox on platforms like linux (including WSL), freebsd, openbsd.
+  yield which.sync('firefox', { nothrow: true });
 
-    if (process.platform === 'darwin') {
-      if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
-      yield '/Applications/Firefox.app/Contents/MacOS/firefox';
-    }
-
-    if (process.platform === 'win32') {
-      if (process.env.PROGRAMFILES) yield process.env.PROGRAMFILES + '\\Mozilla Firefox\\firefox.exe';
-      if (process.env['PROGRAMFILES(X86)']) yield process.env['PROGRAMFILES(X86)'] + '\\Mozilla Firefox\\firefox.exe';
-      yield 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
-    }
-
-    // TODO: Support launching Firefox on Windows from inside WSL
-    // if (LocalBrowser.isWsl()) { }
+  if (process.platform === 'darwin') {
+    if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
+    yield '/Applications/Firefox.app/Contents/MacOS/firefox';
   }
 
-  static createPrefsJs (prefs) {
-    let js = '';
-    for (const key in prefs) {
-      js += 'user_pref("' + key + '", ' + JSON.stringify(prefs[key]) + ');\n';
-    }
-    return js;
+  if (process.platform === 'win32') {
+    if (process.env.PROGRAMFILES) yield process.env.PROGRAMFILES + '\\Mozilla Firefox\\firefox.exe';
+    if (process.env['PROGRAMFILES(X86)']) yield process.env['PROGRAMFILES(X86)'] + '\\Mozilla Firefox\\firefox.exe';
+    yield 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
   }
 
-  async launch (url, signal, logger) {
-    const profileDir = LocalBrowser.makeTempDir();
-    const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
-    if (!QTAP_DEBUG) {
-      args.push('-headless');
-    }
+  // TODO: Support launching Firefox on Windows from inside WSL
+  // if (LocalBrowser.isWsl()) { }
+}
 
-    // http://kb.mozillazine.org/About:config_entries
-    // https://github.com/sitespeedio/browsertime/blob/v23.5.0/lib/firefox/settings/firefoxPreferences.js
-    // https://github.com/airtap/the-last-browser-launcher/blob/v0.1.1/lib/launch/index.js
-    // https://github.com/karma-runner/karma-firefox-launcher/blob/v2.1.3/index.js
-    logger.debug('firefox_prefs_create', 'Creating temporary prefs.js file');
-    fs.writeFileSync(path.join(profileDir, 'prefs.js'), FirefoxBrowser.createPrefsJs({
-      'app.update.disabledForTesting': true, // Disable auto-updates
-      'browser.sessionstore.resume_from_crash': false,
-      'browser.shell.checkDefaultBrowser': false,
-      'dom.disable_open_during_load': false,
-      'dom.max_script_run_time': 0, // Disable "slow script" dialogs
-      'extensions.autoDisableScopes': 1,
-      'extensions.update.enabled': false, // Disable auto-updates
+async function firefox (url, signal, logger) {
+  const profileDir = LocalBrowser.makeTempDir();
+  const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
+  if (!QTAP_DEBUG) {
+    args.push('-headless');
+  }
 
-      // Blank home, blank new tab, disable extra welcome tabs for "first launch"
-      'browser.EULA.override': true,
-      'browser.startup.firstrunSkipsHomepage': false,
-      'browser.startup.page': 0,
-      'datareporting.policy.dataSubmissionPolicyBypassNotification': true, // Avoid extra tab for mozilla.org/en-US/privacy/firefox/
-      'startup.homepage_override_url': '',
-      'startup.homepage_welcome_url': '',
-      'startup.homepage_welcome_url.additional': '',
+  // http://kb.mozillazine.org/About:config_entries
+  // https://github.com/sitespeedio/browsertime/blob/v23.5.0/lib/firefox/settings/firefoxPreferences.js
+  // https://github.com/airtap/the-last-browser-launcher/blob/v0.1.1/lib/launch/index.js
+  // https://github.com/karma-runner/karma-firefox-launcher/blob/v2.1.3/index.js
+  logger.debug('firefox_prefs_create', 'Creating temporary prefs.js file');
+  fs.writeFileSync(path.join(profileDir, 'prefs.js'), createFirefoxPrefsJs({
+    'app.update.disabledForTesting': true, // Disable auto-updates
+    'browser.sessionstore.resume_from_crash': false,
+    'browser.shell.checkDefaultBrowser': false,
+    'dom.disable_open_during_load': false,
+    'dom.max_script_run_time': 0, // Disable "slow script" dialogs
+    'extensions.autoDisableScopes': 1,
+    'extensions.update.enabled': false, // Disable auto-updates
 
-      // Performance optimizations
-      'browser.bookmarks.max_backups': 0, // Optimization, via sitespeedio/browsertime
-      'browser.bookmarks.restore_default_bookmarks': false, // Optimization
-      'browser.cache.disk.capacity': 0, // Optimization: Avoid disk writes
-      'browser.cache.disk.smart_size.enabled': false, // Optimization
-      'browser.chrome.guess_favicon': false, // Optimization: Avoid likely 404 for unspecified favicon
-      'browser.pagethumbnails.capturing_disabled': true, // Optimization, via sitespeedio/browsertime
-      'browser.search.region': 'US', // Optimization: Avoid internal geoip lookup
-      'browser.sessionstore.enabled': false, // Optimization
-      'dom.min_background_timeout_value': 10, // Optimization, via https://github.com/karma-runner/karma-firefox-launcher/issues/19
-    }));
+    // Blank home, blank new tab, disable extra welcome tabs for "first launch"
+    'browser.EULA.override': true,
+    'browser.startup.firstrunSkipsHomepage': false,
+    'browser.startup.page': 0,
+    'datareporting.policy.dataSubmissionPolicyBypassNotification': true, // Avoid extra tab for mozilla.org/en-US/privacy/firefox/
+    'startup.homepage_override_url': '',
+    'startup.homepage_welcome_url': '',
+    'startup.homepage_welcome_url.additional': '',
 
+    // Performance optimizations
+    'browser.bookmarks.max_backups': 0, // Optimization, via sitespeedio/browsertime
+    'browser.bookmarks.restore_default_bookmarks': false, // Optimization
+    'browser.cache.disk.capacity': 0, // Optimization: Avoid disk writes
+    'browser.cache.disk.smart_size.enabled': false, // Optimization
+    'browser.chrome.guess_favicon': false, // Optimization: Avoid likely 404 for unspecified favicon
+    'browser.pagethumbnails.capturing_disabled': true, // Optimization, via sitespeedio/browsertime
+    'browser.search.region': 'US', // Optimization: Avoid internal geoip lookup
+    'browser.sessionstore.enabled': false, // Optimization
+    'dom.min_background_timeout_value': 10, // Optimization, via https://github.com/karma-runner/karma-firefox-launcher/issues/19
+  }));
+
+  try {
+    await LocalBrowser.spawn(getFirefoxCandidates(), args, signal, logger);
+  } finally {
+    // On Windows, when spawn() returns after firefox.exe has stopped, it sometimes can't delete
+    // some temporary files yet as they're somehow still in use (EBUSY). Perhaps a race condition,
+    // or an lagged background process?
+    // > BUSY: resource busy or locked,
+    // > unlink 'C:\Users\RUNNER~1\AppData\Local\Temp\qtap_EZ4IoO\bounce-tracking-protection.sqlite'
+    // Enable `maxRetries` to cover the common case, and beyond that try-catch
+    // as it is not critical for test completion.
+    // TODO: Can we abstract this so that it happens automatically for any directory
+    // obtained via LocalBrowser.makeTempDir?
     try {
-      await LocalBrowser.spawn(this.getCandidates(), args, signal, logger);
-    } finally {
-      fs.rmSync(profileDir, { recursive: true, force: true });
+      fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 2 });
+    } catch (e) {
+      logger.warning('firefox_cleanup_fail', e);
     }
   }
 }
@@ -244,7 +215,7 @@ class FirefoxBrowser {
 export default {
   LocalBrowser,
 
-  firefox: FirefoxBrowser,
+  firefox,
   // https://github.com/vweevers/win-detect-browsers/blob/v7.0.0/lib/browsers.js
   //
   // TODO: safari: [],

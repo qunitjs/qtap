@@ -105,7 +105,7 @@ class ControlServer {
       : (await fsPromises.readFile(file)).toString();
   }
 
-  async launchBrowser (browser, browserName) {
+  async launchBrowser (browserFn, browserName) {
     const clientId = 'client_' + this.constructor.nextClientId++;
     const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
     const logger = this.logger.channel(`qtap_browser_${browserName}_${clientId}`);
@@ -167,7 +167,7 @@ class ControlServer {
 
     try {
       logger.debug('browser_launch_start');
-      await browser.launch(url, signal, logger);
+      await browserFn(url, signal, logger);
       logger.debug('browser_launch_ended');
     } catch (err) {
       // TODO: Report browser_launch_exit to TAP. Eg. "No executable found"

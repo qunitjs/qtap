@@ -36,6 +36,21 @@ function that returns a Promise.
 
 ```js
 /**
+ * A browser launcher is responsible for knowing whether the process failed to
+ * launch or spawn, and whether it exited unexpectedly.
+ *
+ * A launcher is not responsible for knowing whether it succeeded in
+ * opening or navigating to the given URL.
+ *
+ * It is the responsiblity of ControlServer to send the "abort" event
+ * to AbortSignal if it believes the browser has failed to load the
+ * URL within a reasonable timeout, or if the browser has not sent
+ * any message for a while.
+ *
+ * If a browser exits on its own (i.e. ControlServer did not call send
+ * an abort signal), then launch() should throw an Error or reject its
+ * returned Promise.
+ *
  * @param {string} url
  *  URL that the browser should navigate to, HTTP or HTTPS.
  * @param {AbortSignal} signal
@@ -99,10 +114,6 @@ class MyBrowser {
 
   async launch(url, signal, logger) {
     // ...
-  }
-
-  async cleanupOnce() {
-    // Optional
   }
 };
 
