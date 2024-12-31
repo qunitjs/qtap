@@ -1,24 +1,53 @@
 # QTap Architecture
 
-This describes priorities and values, design goals, considered alternatives, and any significant assumptions, caveats, or intentional trade-offs made during development.
+This describes the priorities and values of the QTap project, design goals, considered alternatives, and any significant assumptions, caveats, or intentional trade-offs made during development. These serve as reference to contributors and maintainers when making future decisions, e.g. on proposed changes or reported issues.
 
-## High-level
+## Principles
 
-We write simple and long-term stable code in Node.js.
+QTap is built to be simple, lean, and fast; valued and prioritised in that order.
 
-We favour a single way of doing something that works everywhere, over marginal gains that would introduce layers of indirection, abstraction, conditional branches, or add dependencies.
+### Simple
 
-We favour explicit and efficient inlined implementation in the form of a single stable and well-documented (but slightly) function, over many local single-use functions.
+We value simplicity in installing and using QTap. This covers the CLI, the public Node.js API (module export), printed output, the overall npm package, and any of concepts required to understand these.
 
-We will have at most 5 npm packages as direct dependencies.
+Examples:
 
-Requirements for dependencies:
+* The QTap CLI requires only a single argument.
 
-* must solve a non-trivial problem, e.g. something that is not easily implemented in <50 lines of code that we could write once
-  inline and then use long-term without changes.
-* may not exceed 10KB in size (minified before gzip), and may carry at most 1 indirect or transitive dependency which in turn may not have any dependencies.
-* must be audited and understood by us as if they were our own code, including after each time we upgrade the version we depend on.
-* may not be directly exposed via the QTap API (whether QTap module export or QTap CLI), such that we can freely internally upgrade, replace, or remove this dependency in a semver-minor release.
+  ```
+  qtap test.html
+  ```
+
+  This argument relates directly to a concept we know the user naturally knows and is most concerned about (their test file). There are no other unnamed arguments. There are no required options or flags. The default browser is selected automatically. No awareness of test framework is required (in most cases).
+
+* We favour a single way of doing something that works everywhere, over marginal gains that would introduce layers of indirection, abstraction, conditional branches, or additional dependencies.
+
+* We favour an explicit and efficient inline implementation (e.g. in the form of a single well-documented function with a clear purpose, which may be relatively long, but is readable and linear), over many local functions that are weaved together.
+
+### Lean
+
+We value low barriers and low costs for installing, using, contributing to, and maintaining QTap. This covers both how the QTap software is installed and used, as well as open-source contributions and maintenance of the QTap project itself.
+
+Examples:
+
+* We prefer to write code once in a way that is long-term stable (low maintenance cost), feasible to understand by inexperienced contributors, and thus affordable to audit by secure or sensitive projects that audit their upstream sources. For this and other reasons, we only use dependencies that are similarly small and auditable.
+
+* We maintain a small bundle size that is fast to download, and quick and easy to install. This includes ensuring our dependencies do not restrict or complicate installation or runtime portability in the form OS constrains or other environment requirements.
+
+* We will directly depend on at most 5 npm packages. Requirements for dependencies:
+
+  * must solve a non-trivial problem, e.g. something that is not easily implemented in under 50 lines of code that we could write once ourselvers and then use long-term without changes.
+  * may not exceed 10KB in size (before gzip), and may carry at most 1 indirect or transitive dependency which in turn must have zero dependencies.
+  * must be audited and understood by us as if it were our own code, including each time before we upgrade the version we depend on.
+  * may not be directly exposed to end-users (whether QTap CLI or QTap Node.js API), so that we could freely upgrade, replace, or remove it in a semver-minor release.
+
+### Fast
+
+Performance is a first-class principle in QTap.
+
+The first priority (after the "Simple" and "Lean" values above) is time to first result. This means the CLI endpoint should as directly as possible launch browsers and start the ControlServer. Any computation, imports and other overhead is deferred when possible.
+
+The second piority is time to last result (e.g. "Done!"), which is generally what a human in local development (especially in watch mode) will be waiting for. Note that this is separate from when the CLI process technically exits, which is less important to us. It is expected that the process will in practice exit immediately after the last result is printed, but when we have a choice, it is important to first get and communicate test results. In particular for watch mode, shutdown logic will not happen on re-runs and thus is avoided if we don't do it in the critical path toward obtaining test results.
 
 ## Debugging
 
@@ -28,25 +57,23 @@ Set `--verbose` in the QTap CLI to enable verbose debug logging.
 
 ## QTap API: Browser launcher
 
-Each browser is implemented as a single async function that launches the browser. The function is called with all required information and services [injected](https://en.wikipedia.org/wiki/Dependency_injection) as parameters (client metadata, URL, logger function).
+Each browser is implemented as a single async function that launches the browser. The function is called with all required information and services. The [injected](https://en.wikipedia.org/wiki/Dependency_injection) parameters include a URL, an abort signal, and a logger function.
 
-The function is expected to run as long as the browser is running, with the Promise representing the browser process. If the browser exits for any reason, you may run any cleanup and then return also. If the browser fails or crashes for any reason, this can be conveyed
-by throwing an error (or rejecting a Promise) from your async function.
+The function is expected to run as long as the browser is running, with the returned Promise representing the browser process. If the browser exits for any reason, you may run any cleanup and then return. If the browser fails or crashes for any reason, this can be conveyed by throwing an error (or rejecting a Promise) from your async function.
 
-You can ensure any clean up is applied by using `try-finally`.
+It is recommended to use `try-finally` to ensure clean up is reliably run.
 
-One of the passed parameters is a standard [`AbortSignal` object](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal). When QTap has received all test results, or for other reasons needs to stop the browser, it will send the `abort` event to this object. This establishes a way to convey a stop signal from the beginning, leaving no gap.
-
-AbortSignal, while popularised in relation to the "Fetch" Web API, is also natively implemented by Node.js and supported in its [`child_process.spawn()` function](https://nodejs.org/docs/latest-v22.x/api/child_process.html#child_processspawncommand-args-options).
+One of the passed parameters is a standard [`AbortSignal` object](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal). When QTap has received all test results, or for any reason needs to stop the browser, it will send the `abort` event to your AbortSignal. AbortSignal was popularised by the "Fetch" Web API, and is natively implemented by Node.js and supported in its [`child_process.spawn()` function](https://nodejs.org/docs/latest-v22.x/api/child_process.html#child_processspawncommand-args-options).
 
 ```js
 // Using our utility
-function myBrowser(url, signal, logger) {
+async function myBrowser(url, signal, logger) {
   await LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger);
 }
 
 // Minimal custom implementation on native Node.js
-function myBrowser(url, signal, logger) {
+async function myBrowser(url, signal, logger) {
+  logger.debug('Spawning /bin/mybrowser');
   const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
   await new Promise((resolve, reject) => {
     spawned.on('error', (error) => reject(error));
@@ -58,8 +85,6 @@ function myBrowser(url, signal, logger) {
 Alternatives considered:
 
 * **Base class** that plugins must extend, with one or more stub methods to be implemented such as `getCandidates`, `getArguments`, `launch`, and `stop`.
-
-  This kind of inherence and declarative
 
   ```js
   class MyBrowser extends BaseBrowser {
@@ -84,16 +109,18 @@ Alternatives considered:
   }
   ```
 
-  This approach was not taken as makes ourselves a bottleneck for future expansion and limits flexibilty. It may make some theoretical simple cases and demos simpler, but then comes at a steep increase in complexity as soon as you need to step outside of that. Nesting and long-term stability more difficult to ensure with stateful functions and inheritence over composition of single-purpose utilities.
+  This kind of inherence and declarative approach was not taken, as it makes ourselves a bottleneck for future expansion, and limits flexibilty. It may make some theoretical basic examples and demos look simpler, but then comes at a steep increase in complexity as soon as you need to step outside of that. And while the basic case may look simpler on-screen, it is harder to write from scratch, and harder to understand. It does not faccilitate learning  what happens underneath, what is required or why, in what order things are done, or what else is available. Nesting and long-term stability is difficult to ensure with stateful functions and inheritence.
 
-  In order to expose the information in different places it requires upstream to add repeat arguments or class properties via constructor.
+  We prefer composition of single-purpose utility functions, and placing the plugin author at a single entrypoint function from where they can translate their needs into a search for a method that does that (whether our utility, or something else).
+
+  In order to expose the information in different places it also requires upstream to add repeat arguments, or mandate a class constructor with stateful properties, and taking care to call (or not override) the parent constructor.
 
   Catching errors and stopping the browser gets messy once dealing with real browsers. In particular around creation and cleanup of temporary directories.
 
 * **Single function with `stop` method**. The browser launch function would expose a `stop` method, as part of a returned object. This addresses most of the above.
 
   ```js
-  function myBrowser(url, logger) {
+  function myBrowser (url, logger) {
     // Native `child_process.spawn(command, [url])`
     // or use our utility:
     const sub = qtap.LocalBrowser.spawn(
@@ -103,13 +130,15 @@ Alternatives considered:
     );
 
     return {
-      stop() {
+      stop: function () {
         sub.kill();
       }
     };
   ```
 
   What remains unaddressed here is avoiding dangling processes in the case of errors between internal process spawning and the returning of the `stop` function. It places a high responsibility on downstream to catch any and all errors there. It also leave some abiguity over the meaning of uncaught errors and how to convey errors or unexpected subprocess exists, because the only chance we have to convey these above is when starting the browser. Once the browser has started, and our function has returned to expose the `stop`, we have no communication path.
+
+  The next solution uses AbortSignal, which is created by QTap before the launch function is called, thus establishing a way to convey the "stop" signal from the very beginning, leaving no gap for uncertainty or ambiguity to exist in.
 
 * **Single async function with AbortSignal**. The browser is an async function that tracks the lifetime of the browser procoess, and is given an AbortSignal for stopping the process.
 
@@ -119,17 +148,17 @@ Alternatives considered:
   // Using our utility
   import qtap from 'qtap';
 
-  function myBrowser(url, signal, logger) {
+  function myBrowser (url, signal, logger) {
     await qtap.LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger );
   }
 
   // Minimal custom implementation
   import child_process from 'node:child_process';
 
-  function myBrowser(url, signal, logger) {
+  function myBrowser (url, signal, logger) {
     const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
     await new Promise((resolve, reject) => {
-      spawned.on('error', error => {
+      spawned.on('error', (error) => {
         (signal.aborted ? resolve() : reject(error));
       });
       spawned.on('exit', () => {
@@ -188,22 +217,19 @@ The clientId is only unique to a single qtap process and thus should not be used
 
 * When creating a temporary directory for the Firefox browser profile, we call our `LocalBrowser.mkTempDir` utility which uses [Node.js `fs.mkdtemp`](https://nodejs.org/docs/latest-v22.x/api/fs.html#fsmkdtempprefix-options-callback), which creates a new directory with a random name that didn't already exist. This is favoured over `os.tmpdir()` with a prefix like `"qtap" + clientId`, as that would conflict with with concurrent invocations, and any remnants of past invokations.
 
-
 ## QTap Internal: Client send
 
-Source code: [function qtapClientHead](./src/server.js#170).
+Source code: [function qtapClientHead](./src/server.js).
 
-Goal:
+Goals:
 
 * Report results from browser client to CLI as fast as possible.
 
-* The first result is the most important, as this will signal
-  the CLI to change reporting of "Launching browser" to "Running tests".
+* The first result is the most important, as this will instruct the CLI to change reporting of "Launching browser" to "Running tests".
   This implicitly conveys to the developer that:
   - the browser was found and launched correctly,
   - the test file/URL was found and served correctly,
-  - most of their application code loaded and executed correctly in the
-    given browser,
+  - most of their application code loaded and executed correctly in the given browser,
   - their chosen test framework and TAP reporter are working,
   - most of their unit tests loaded and executed correctly,
   - one of their tests has finished executing.
@@ -211,48 +237,31 @@ Goal:
 Approaches considered:
 
 * **Fixed debounce**, e.g. `setTimeout(send, 200)`.
+
   Downside:
   - Delays first response by 200ms.
-  - Server might receive lines out-of-order, thus requiring an ordering
-    mechanism.
+  - Server might receive lines out-of-order, thus requiring an ordering mechanism.
+
 * **Fixed throttle**, e.g. `send() + setTimeout(.., 200)`.
+
   Downside:
-  - First response is just "TAP version" and still delays
-    first real result by 200ms.
+  - First response is just "TAP version" and still delays first real result by 200ms.
   - Idem, out-of-order concern.
-* **Now + onload loop**, e.g. `send() + XHR.onload` to signal when to
-  send the next buffer. This "dynamic" interval is close to the optimum
-  interval and naturally responds to latency changes and back pressure,
-  although in theory is still 2x the smallest possible interval (unless
-  ordering or buffering without any interval), since it waits for 1 RTT
-  (both for client request arriving on server, and for an empty server
-  response to arrive back on the client). It is inherently unknowable
-  when the server has received a chunk without communication. In practice
-  this approach is quicker than anything else, prevents known concerns,
-  and nearly cuts down implementation complexity to a mere 5 lines of
-  code.
+
+* **Now + onload loop** e.g. `send() + XHR.onload` to signal when to send the next buffer.
+
+  This "dynamic" interval is close to the optimum interval and naturally responds to latency changes and back pressure, although in theory is still 2x the smallest possible interval (unless ordering or buffering without any interval), since it waits for 1 RTT (both for client request arriving on server, and for an empty server response to arrive back on the client). It is inherently unknowable when the server has received a chunk without communication. In practice this approach is quicker than anything else, prevents known concerns, and nearly cuts down implementation complexity to a mere 5 lines of code.
 
   Downside: First roundtrip wasted on merely sending "TAP version".
 
 * **Unthrottled with ordering**, e.g. `send(..., offset=N)`
-  This is the approach taken by [tape-testing/testling](https://github.com/tape-testing/testling/blob/v1.7.7/browser/prelude.js) and would involve the client needing an XHR stream
-  (in older browsers) or WebSocket (in newer ones), an ordered event
-  emitter, and JSON wrapping the TAP lines; and the server listening
-  for both XHR and WebSocket, the client discovering the WS URL,
-  and the server buffering and re-constituting chunks in the right
-  order, with some tolerance or timeout between them. While this
-  clearly works, it is heavier and involves more moving parts than I
-  care to write, maintain, or depend on. It also varies behaviour
-  between clients instead of one way that works everywhere. The specific
-  packages used the Testling additionally suffer from having largely
-  been ghosted (i.e. GitHub link 404, author deactivated, commit messages
-  and history no longer has a canonical home, source only browsable
-  via npm).
 
-* **Zero-debounce + onload loop** ⭐️ *Chosen approach*,
-  e.g. `setTimeout(send,0) + XHR.onload` to dictate frequency.
-  The first chunk will include everything until the current event loop
-  tick has been exhausted, thus including not just the first line
-  but also the entirety of the first real result. Waiting for `XHR.onload`
-  naturally ensures correct ordering, and naturally responds to changes
-  in latency and back pressure.
+  This is the approach taken by [tape-testing/testling](https://github.com/tape-testing/testling/blob/v1.7.7/browser/prelude.js) and would involve the client needing an XHR stream (in older browsers) or WebSocket (in newer ones), an ordered event emitter, and JSON wrapping the TAP lines; and the server listening for both XHR and WebSocket, the client discovering the WS URL, and the server buffering and re-constituting chunks in the right order, with some tolerance or timeout between them.
+
+  While this clearly works, it is heavier with more moving parts to write, maintain, or depend on. It also varies behaviour between clients instead of one way that works everywhere. The specific packages used by Testling are additionally affected by the Substack ghosting (i.e. GitHub link 404, account deactivated, commit messages and history no longer has a canonical home, source only available via snapshots on npm).
+
+* **Zero-debounce + onload loop** ⭐️ *Chosen approach*
+
+  E.g. `setTimeout(send,0) + XHR.onload` to dictate frequency.
+
+  The first chunk will include everything until the current event loop tick has been exhausted, thus including not just the first line but also the entirety of the first real result. Waiting for `XHR.onload` naturally ensures correct ordering, and naturally responds to changes in latency and back pressure.

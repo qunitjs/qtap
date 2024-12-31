@@ -183,7 +183,7 @@ class ControlServer {
       // Support QUnit 3.0+: Enable TAP reporter, declaratively.
       window.qunit_config_reporters_tap = true;
 
-      // See ARCHITECTURE.md#client-buffer
+      // See ARCHITECTURE.md#qtap-internal-client-send
       var qtapNativeLog = console.log;
       var qtapBuffer = '';
       var qtapShouldSend = true;
