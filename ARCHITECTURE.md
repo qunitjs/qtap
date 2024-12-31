@@ -20,6 +20,8 @@ Examples:
 
   This argument relates directly to a concept we know the user naturally knows and is most concerned about (their test file). There are no other unnamed arguments. There are no required options or flags. The default browser is selected automatically. No awareness of test framework is required (in most cases).
 
+  When invoking `qtap` without arguments out of curiosity, we generate not just an error message but also the `--help` usage documentation.
+
 * We favour a single way of doing something that works everywhere, over marginal gains that would introduce layers of indirection, abstraction, conditional branches, or additional dependencies.
 
 * We favour an explicit and efficient inline implementation (e.g. in the form of a single well-documented function with a clear purpose, which may be relatively long, but is readable and linear), over many local functions that are weaved together.

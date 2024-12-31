@@ -42,6 +42,7 @@ program
   .option('-v, --verbose', 'Enable verbose debug logging.')
   .option('-V, --version', 'Display version number.')
   .helpOption('-h, --help', 'Display this usage information.')
+  .showHelpAfterError()
   .parse(process.argv);
 
 const opts = program.opts();

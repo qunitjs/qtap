@@ -6,7 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import stream from 'node:stream';
 
-import TapParser from 'tap-parser';
+import { Parser as TapParser } from 'tap-parser';
 import tapFinished from '@tapjs/tap-finished';
 
 const MIME_TYPES = {
@@ -111,6 +111,7 @@ class ControlServer {
     const logger = this.logger.channel(`qtap_browser_${browserName}_${clientId}`);
 
     const controller = new AbortController();
+    const summary = { ok: true };
 
     let readableController;
     const readable = new ReadableStream({
@@ -120,10 +121,9 @@ class ControlServer {
     });
 
     this.browsers.set(clientId, {
-      readableController
+      logger,
+      readableController,
     });
-
-    const [readableForFinished, readeableForParser] = readable.tee();
 
     const tapFinishFinder = tapFinished({ wait: 0 }, () => {
       logger.debug('browser_tap_finished', 'Requesting browser stop');
@@ -133,22 +133,31 @@ class ControlServer {
         controller.abort('QTap: browser_tap_finished');
       }
     });
-    readableForFinished.pipeTo(stream.Writable.toWeb(tapFinishFinder));
 
-    const tapParser = new TapParser();
-    readeableForParser.pipeTo(stream.Writable.toWeb(tapParser));
     // Also stop on bailout (tap-finished doesn't handle this)
+    const tapParser = new TapParser();
     tapParser.on('bailout', (reason) => {
+      summary.ok = false;
       logger.debug('browser_tap_bailout', reason);
+
       // Check in case browser already gone (race condition)
       if (this.browsers.get(clientId)) {
         this.browsers.delete(clientId);
         controller.abort('QTap: browser_tap_bailout');
       }
     });
+    tapParser.once('fail', () => {
+      summary.ok = false;
+      logger.debug('browser_tap_fail', 'One or more tests failed');
+    });
+
     // Debugging
     // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
     // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
+
+    const [readeableForParser, readableForFinished] = readable.tee();
+    readeableForParser.pipeTo(stream.Writable.toWeb(tapParser));
+    readableForFinished.pipeTo(stream.Writable.toWeb(tapFinishFinder));
 
     // TODO: Implement timeout if stream is quiet for too long
     // --timeout=3000s
@@ -317,10 +326,12 @@ class ControlServer {
       // eslint-disable-next-line no-control-regex
       body = body.replace(/\x1b\[[0-9]+m/g, '');
       const clientId = url.searchParams.get('qtap_clientId');
-      this.logger.debug('browser_tap', clientId, JSON.stringify(body.slice(0, 30) + '…'));
       const browser = this.browsers.get(clientId);
       if (browser) {
         browser.readableController.enqueue(body);
+        browser.logger.debug('browser_tap_received', JSON.stringify(body.slice(0, 30) + '…'));
+      } else {
+        this.logger.debug('browser_tap_unhandled', clientId, JSON.stringify(body.slice(0, 30) + '…'));
       }
     });
     resp.writeHead(204);

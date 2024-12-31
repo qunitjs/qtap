@@ -132,7 +132,8 @@ function createFirefoxPrefsJs (prefs) {
 function * getFirefoxCandidates () {
   if (process.env.FIREFOX_BIN) yield process.env.FIREFOX_BIN;
 
-  // Find /usr/bin/firefox on platforms like linux (including WSL), freebsd, openbsd.
+  // Handle unix-like platforms such as linux (incl WSL), darwin (macOS), freebsd, openbsd.
+  // Example: /usr/bin/firefox
   yield which.sync('firefox', { nothrow: true });
 
   if (process.platform === 'darwin') {
