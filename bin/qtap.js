@@ -55,6 +55,13 @@ if (opts.version) {
 } else if (!program.args.length) {
   program.help();
 } else {
+  process.on('unhandledRejection', (reason) => {
+    console.error(reason);
+  });
+  process.on('uncaughtException', (error) => {
+    console.error(error);
+  });
+
   try {
     const exitCode = await qtap.run(opts.browser, program.args, {
       config: opts.config,

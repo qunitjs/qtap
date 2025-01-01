@@ -8,26 +8,7 @@ import stream from 'node:stream';
 
 import { Parser as TapParser } from 'tap-parser';
 import tapFinished from '@tapjs/tap-finished';
-
-const MIME_TYPES = {
-  bin: 'application/octet-stream',
-  css: 'text/css; charset=utf-8',
-  gif: 'image/gif',
-  htm: 'text/html; charset=utf-8',
-  html: 'text/html; charset=utf-8',
-  jpe: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  jpg: 'image/jpeg',
-  js: 'application/javascript; charset=utf-8',
-  json: 'application/json; charset=utf-8',
-  mjs: 'application/javascript; charset=utf-8',
-  png: 'image/png',
-  svg: 'image/svg+xml',
-  ttf: 'font/sfnt',
-  txt: 'text/plain; charset=utf-8',
-  woff2: 'application/font-woff2',
-  woff: 'font/woff',
-};
+import { MIME_TYPES, humanSeconds } from './util.js';
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 
@@ -51,11 +32,16 @@ class ControlServer {
     this.testFile = testFile;
     this.browsers = new Map();
     this.logger = logger.channel('qtap_server_' + this.constructor.nextServerId++);
-    // Optimization: Prefetch test file in parallel with http.Server#listen.
+    // Optimization: Prefetch test file in parallel with server starting and browser launching.
+    // Once browsers are launched and they make their first HTTP request,
+    // we'll await this in handleRequest/getTestFile.
     this.testFilePromise = this.fetchTestFile(this.testFile);
 
     const server = http.createServer();
     this.proxyBase = null;
+
+    // Optimization: Allow qtap.js to proceed and load browser functions.
+    // We'll await this later in launchBrowser().
     this.proxyBasePromise = new Promise((resolve) => {
       server.on('listening', () => {
         this.proxyBase = 'http://localhost:' + server.address().port;
@@ -77,7 +63,7 @@ class ControlServer {
             this.handleTap(req, url, resp);
             break;
           default:
-            this.handleStatic(req, url, resp);
+            await this.handleRequest(req, url, resp);
         }
       } catch (e) {
         this.logger.warning('respond_uncaught', e);
@@ -113,6 +99,10 @@ class ControlServer {
     const controller = new AbortController();
     const summary = { ok: true };
 
+    const CLIENT_IDLE_TIMEOUT = 5000;
+    const CLIENT_IDLE_INTERVAL = 1000;
+    let clientIdleTimer = null;
+
     let readableController;
     const readable = new ReadableStream({
       start (readableControllerParam) {
@@ -120,50 +110,85 @@ class ControlServer {
       }
     });
 
-    this.browsers.set(clientId, {
+    const browser = {
       logger,
       readableController,
-    });
+      clientIdleActive: performance.now(),
+    };
+    this.browsers.set(clientId, browser);
+
+    // NOTE: The below does not need to check browsers.get() before
+    // calling browsers.delete() or controller.abort() , because both of
+    // these are safely idempotent and ignore all but the first call
+    // for a given client. Hence no need to guard against race conditions
+    // where two reasons may both try to stop the browser.
+    //
+    // Possible stop reasons, whichever is reached first:
+    // 1. tap-finished.
+    // 2. tap-parser 'bailout' event (client knows it crashed),
+    //    because tap-finished doesn't handle this.
+    // 3. timeout after browser has not been idle for too long
+    //   (likely failed to start, lost connection, or crashed unknowingly)
+
+    const stopBrowser = async (reason) => {
+      clearTimeout(clientIdleTimer);
+      this.browsers.delete(clientId);
+      controller.abort(reason);
+    };
 
     const tapFinishFinder = tapFinished({ wait: 0 }, () => {
       logger.debug('browser_tap_finished', 'Requesting browser stop');
-      // Check in case browser already gone (race condition)
-      if (this.browsers.get(clientId)) {
-        this.browsers.delete(clientId);
-        controller.abort('QTap: browser_tap_finished');
-      }
+
+      stopBrowser('QTap: browser_tap_finished');
     });
 
-    // Also stop on bailout (tap-finished doesn't handle this)
     const tapParser = new TapParser();
     tapParser.on('bailout', (reason) => {
       summary.ok = false;
       logger.debug('browser_tap_bailout', reason);
 
-      // Check in case browser already gone (race condition)
-      if (this.browsers.get(clientId)) {
-        this.browsers.delete(clientId);
-        controller.abort('QTap: browser_tap_bailout');
-      }
+      stopBrowser('QTap: browser_tap_bailout');
     });
     tapParser.once('fail', () => {
       summary.ok = false;
       logger.debug('browser_tap_fail', 'One or more tests failed');
     });
-
     // Debugging
     // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
     // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
 
+    // TODO: Make timeout configurable, e.g. --timeout=3000s
+    //
+    // TODO: Consider handling timeout client-side by setting options.timeout to
+    // qunit_config_testtimeout in getTestFile() and send a "Bail out!" tap
+    // message which makes the server stop the browser.
+    // Pro - timeouts are in sync. Con - we still need a "real" timeout
+    // on this side.
+    //
+    // TODO: Dynamically increase this to whatever timeout the client's test framework
+    // has set (QUnit, Mocha, Jasmine), with one second tolerance added for delay
+    // (network/interprocess) between client and QTap.
+    // We could probably read out smth like QUnit.config.testTimeout
+    // and collect it via an endpoint like /.qtap/set_timeout?clientId=
+    //
+    // NOTE: We use performance.now() instead of natively clearTimeout+setTimeout
+    // on each event, because that would add significant overhead from Node.js/V8
+    // creating tons of timers when processing a large batch of test results back-to-back.
+    clientIdleTimer = setTimeout(function qtapClientTimeout () {
+      if ((performance.now() - browser.clientIdleActive) > CLIENT_IDLE_TIMEOUT) {
+        logger.debug('browser_idle_timeout', 'Requesting browser stop');
+        // TODO:
+        // Produce a tap line to report this test failure to CLI output/reporters.
+        summary.ok = false;
+        stopBrowser('QTap: browser_idle_timeout');
+      } else {
+        clientIdleTimer = setTimeout(qtapClientTimeout, CLIENT_IDLE_INTERVAL);
+      }
+    }, CLIENT_IDLE_INTERVAL);
+
     const [readeableForParser, readableForFinished] = readable.tee();
     readeableForParser.pipeTo(stream.Writable.toWeb(tapParser));
     readableForFinished.pipeTo(stream.Writable.toWeb(tapFinishFinder));
-
-    // TODO: Implement timeout if stream is quiet for too long
-    // --timeout=3000s
-    //    use in getTestFile() as QTAP_TIMEOUT for qunit_config_testtimeout
-    //    use in $something to send an error to reporters and force-quit
-    //    the browser.
 
     let signal = controller.signal;
     if (QTAP_DEBUG) {
@@ -282,7 +307,7 @@ class ControlServer {
     return html;
   }
 
-  async handleStatic (req, url, resp) {
+  async handleRequest (req, url, resp) {
     const filePath = path.join(this.root, url.pathname);
     const ext = path.extname(url.pathname).slice(1);
     if (!filePath.startsWith(this.root)) {
@@ -328,8 +353,14 @@ class ControlServer {
       const clientId = url.searchParams.get('qtap_clientId');
       const browser = this.browsers.get(clientId);
       if (browser) {
+        const now = performance.now();
         browser.readableController.enqueue(body);
-        browser.logger.debug('browser_tap_received', JSON.stringify(body.slice(0, 30) + '…'));
+        browser.logger.debug('browser_tap_received',
+          `+${humanSeconds(now - browser.clientIdleActive)}s`,
+          JSON.stringify(body.slice(0, 30) + '…')
+        );
+
+        browser.clientIdleActive = performance.now();
       } else {
         this.logger.debug('browser_tap_unhandled', clientId, JSON.stringify(body.slice(0, 30) + '…'));
       }

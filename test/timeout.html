@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<title>timeout</title>
+<script>
+console.log('TAP version 13');
+function delay(ms, fn) {
+  setTimeout(fn, ms);
+}
+delay(1000, () => {
+  console.log('ok 1 Foo bar');
+  delay(2100, () => {
+    console.log('ok 2 Baz > this thing');
+    delay(3200, () => {
+      console.log('ok 3 Baz > another thing');
+      delay(4000, () => {
+        console.log('ok 4 Quux');
+      });
+    });
+  });
+});
+</script>
