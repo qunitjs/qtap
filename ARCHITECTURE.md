@@ -86,11 +86,11 @@ async function myBrowser(url, signal, logger) {
 
 Alternatives considered:
 
-* **Base class** that plugins must extend, with one or more stub methods to be implemented such as `getCandidates`, `getArguments`, `launch`, and `stop`.
+* **Base class** that plugins must extend, with one or more stub methods to be implemented such as `getPaths`, `getArguments`, `launch`, and `stop`.
 
   ```js
   class MyBrowser extends BaseBrowser {
-    getCandidates() {
+    getPaths() {
       return ['/bin/mybrowser']
     }
     getArguments(url) {
@@ -98,7 +98,7 @@ Alternatives considered:
     }
     // inherited:
     // startExecutable(url) {
-    //   ... calls getCandidates
+    //   ... calls getPaths
     //   ... calls getArguments,
     //   ... spawns child process
     // }
@@ -185,11 +185,7 @@ Alternatives considered:
 
     const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
     const args = ['-headless', '-profile', profileDir, url];
-    try {
-      await LocalBrowser.spawn(['/bin/mybrowser'], args, signal, logger);
-    } finally {
-      fs.rmSync(profileDir, { recursive: true, force: true });
-    }
+    await LocalBrowser.spawn(['/bin/mybrowser'], args, signal, logger);
   }
   ```
 

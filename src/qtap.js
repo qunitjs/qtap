@@ -100,6 +100,8 @@ async function run (browserNames, files, options) {
       await launched;
     }
   } finally {
+    browsers.LocalBrowser.rmTempDirs(logger);
+
     // Avoid dangling browser processes. Even if the above throws,
     // make sure we let each server exit (TODO: Why?)
     // and let each browser do clean up (OK, this is useful, rm tmpdir,

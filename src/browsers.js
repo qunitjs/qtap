@@ -8,10 +8,11 @@ import path from 'node:path';
 import which from 'which';
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
+const tempDirs = [];
 
 const LocalBrowser = {
   /**
-   * @param {string|Array<string|null>|Iterator<string|null>} candidates
+   * @param {string|Array<string|null>|Iterator<string|null>} paths
    *  Path to an executable command or an iterable list of candidate paths to
    *  check and use the first one that exists.
    *
@@ -19,20 +20,23 @@ const LocalBrowser = {
    *  be easier to write your list as a generator function with as little or much
    *  conditional logic around yield statements as-needed.
    *
-   *  See FirefoxBrowser.getCandidates for an example.
+   *  Any `undefined` or `null` entries are automatically skipped, to make it
+   *  easy to include the result of `process.env.YOUR_KEY` or `which.sync()`.
+   *
+   *  See getFirefoxPaths for an example.
    *
    * @param {Array<string>} args List of string arguments, passed to child_process.spawn()
    *  which will automatically quote and escape these.
    * @param {AbortSignal} signal
    * @return {Promise}
    */
-  async spawn (candidates, args, signal, logger) {
-    if (typeof candidates === 'string') {
-      candidates = [candidates];
+  async spawn (paths, args, signal, logger) {
+    if (typeof paths === 'string') {
+      paths = [paths];
     }
     let exe;
-    for (const candidate of candidates) {
-      if (candidate !== null) {
+    for (const candidate of paths) {
+      if (candidate !== undefined && candidate !== null) {
         // Optimization: Use fs.existsSync. It is on par with accessSync and statSync,
         // and beats concurrent fs/promises.access(cb) via Promise.all().
         // Starting the promise chain alone takes the same time as a loop with
@@ -91,33 +95,34 @@ const LocalBrowser = {
   /**
    * Create a new temporary directory and return its name.
    *
+   * The newly created directory will automatically will cleaned up.
+   *
    * @returns {string}
    */
   makeTempDir () {
     // Use mkdtemp (instead of only tmpdir) to avoid clash with past or concurrent qtap procesess.
-    return fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_'));
+    tempDirs.push(dir);
+    return dir;
   },
 
-  /**
-   * Detect Windows Subsystem for Linux
-   *
-   * @returns {bool}
-   */
-  isWsl () {
-    try {
-      return (
-        process.platform === 'linux'
-        // confirm "Microsoft" (WSL 1) or "microsoft" lowercase (WSL 2)
-        && fs.readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft')
-        // not in a Podman container
-        && !fs.existsSync('/run/.containerenv')
-        // not in a Docker container
-        && !fs.existsSync('/.dockerenv')
-      );
-    } catch (err) {
-      // Ignore: /proc/version not found
-      return false;
+  rmTempDirs (logger) {
+    // On Windows, after spawn() returns for a stopped firefox.exe, we sometimes can't delete
+    // a temporary file because it is somehow still in use (EBUSY). Perhaps a race condition,
+    // or an lagged background process?
+    // > BUSY: resource busy or locked,
+    // > unlink 'C:\Users\RUNNER~1\AppData\Local\Temp\qtap_EZ4IoO\bounce-tracking-protection.sqlite'
+    //
+    // Workaround: Enable `maxRetries` in case we just need to wait a little bit, and beyond that
+    // use a try-catch to ignore a failed retry, because it is not critical for test completion.
+    for (const dir of tempDirs) {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+      } catch (e) {
+        logger.warning('browser_rmtempdir_fail', e);
+      }
     }
+    tempDirs.length = 0;
   }
 };
 
@@ -129,10 +134,12 @@ function createFirefoxPrefsJs (prefs) {
   return js;
 }
 
-function * getFirefoxCandidates () {
-  if (process.env.FIREFOX_BIN) yield process.env.FIREFOX_BIN;
+function * getFirefoxPaths () {
+  yield process.env.FIREFOX_BIN;
 
-  // Handle unix-like platforms such as linux (incl WSL), darwin (macOS), freebsd, openbsd.
+  // Handle unix-like platforms such as linux, WSL, darwin/macOS, freebsd, openbsd.
+  // Note that firefox-esr on Debian/Ubuntu includes a 'firefox' alias.
+  //
   // Example: /usr/bin/firefox
   yield which.sync('firefox', { nothrow: true });
 
@@ -146,9 +153,6 @@ function * getFirefoxCandidates () {
     if (process.env['PROGRAMFILES(X86)']) yield process.env['PROGRAMFILES(X86)'] + '\\Mozilla Firefox\\firefox.exe';
     yield 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
   }
-
-  // TODO: Support launching Firefox on Windows from inside WSL
-  // if (LocalBrowser.isWsl()) { }
 }
 
 async function firefox (url, signal, logger) {
@@ -165,52 +169,31 @@ async function firefox (url, signal, logger) {
   logger.debug('firefox_prefs_create', 'Creating temporary prefs.js file');
   fs.writeFileSync(path.join(profileDir, 'prefs.js'), createFirefoxPrefsJs({
     'app.update.disabledForTesting': true, // Disable auto-updates
-    'browser.sessionstore.resume_from_crash': false,
-    'browser.shell.checkDefaultBrowser': false,
-    'dom.disable_open_during_load': false,
-    'dom.max_script_run_time': 0, // Disable "slow script" dialogs
-    'extensions.autoDisableScopes': 1,
-    'extensions.update.enabled': false, // Disable auto-updates
-
-    // Blank home, blank new tab, disable extra welcome tabs for "first launch"
-    'browser.EULA.override': true,
-    'browser.startup.firstrunSkipsHomepage': false,
-    'browser.startup.page': 0,
-    'datareporting.policy.dataSubmissionPolicyBypassNotification': true, // Avoid extra tab for mozilla.org/en-US/privacy/firefox/
-    'startup.homepage_override_url': '',
-    'startup.homepage_welcome_url': '',
-    'startup.homepage_welcome_url.additional': '',
-
-    // Performance optimizations
     'browser.bookmarks.max_backups': 0, // Optimization, via sitespeedio/browsertime
     'browser.bookmarks.restore_default_bookmarks': false, // Optimization
     'browser.cache.disk.capacity': 0, // Optimization: Avoid disk writes
     'browser.cache.disk.smart_size.enabled': false, // Optimization
     'browser.chrome.guess_favicon': false, // Optimization: Avoid likely 404 for unspecified favicon
+    'browser.EULA.override': true, // Blank start, disable extra tab
     'browser.pagethumbnails.capturing_disabled': true, // Optimization, via sitespeedio/browsertime
     'browser.search.region': 'US', // Optimization: Avoid internal geoip lookup
     'browser.sessionstore.enabled': false, // Optimization
+    'browser.sessionstore.resume_from_crash': false,
+    'browser.shell.checkDefaultBrowser': false,
+    'browser.startup.firstrunSkipsHomepage': false, // Blank start, disable extra tab
+    'browser.startup.page': 0, // Blank start
+    'datareporting.policy.dataSubmissionPolicyBypassNotification': true, // Blank start, disable extra tab for mozilla.org/en-US/privacy/firefox/
+    'dom.disable_open_during_load': false,
+    'dom.max_script_run_time': 0, // Disable "slow script" dialogs
     'dom.min_background_timeout_value': 10, // Optimization, via https://github.com/karma-runner/karma-firefox-launcher/issues/19
+    'extensions.autoDisableScopes': 1,
+    'extensions.update.enabled': false, // Disable auto-updates
+    'startup.homepage_override_url': '', // Blank start, disable extra tab
+    'startup.homepage_welcome_url': '', // Blank start, disable extra tab
+    'startup.homepage_welcome_url.additional': '', // Blank start, disable extra tab
   }));
 
-  try {
-    await LocalBrowser.spawn(getFirefoxCandidates(), args, signal, logger);
-  } finally {
-    // On Windows, when spawn() returns after firefox.exe has stopped, it sometimes can't delete
-    // some temporary files yet as they're somehow still in use (EBUSY). Perhaps a race condition,
-    // or an lagged background process?
-    // > BUSY: resource busy or locked,
-    // > unlink 'C:\Users\RUNNER~1\AppData\Local\Temp\qtap_EZ4IoO\bounce-tracking-protection.sqlite'
-    // Enable `maxRetries` to cover the common case, and beyond that try-catch
-    // as it is not critical for test completion.
-    // TODO: Can we abstract this so that it happens automatically for any directory
-    // obtained via LocalBrowser.makeTempDir?
-    try {
-      fs.rmSync(profileDir, { recursive: true, force: true, maxRetries: 2 });
-    } catch (e) {
-      logger.warning('firefox_cleanup_fail', e);
-    }
-  }
+  await LocalBrowser.spawn(getFirefoxCandidates(), args, signal, logger);
 }
 
 export default {
