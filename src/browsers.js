@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import which from 'which';
+import { concatGenFn } from './util.js';
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 const tempDirs = [];
@@ -85,7 +86,7 @@ const LocalBrowser = {
         if (!signal.aborted) {
           reject(new Error(details));
         } else {
-          logger.debug('browser_natural_exit', details);
+          logger.debug('browser_natural_exit', `Process exitted with code ${code} and signal ${sig}`);
           resolve();
         }
       });
@@ -126,6 +127,21 @@ const LocalBrowser = {
   }
 };
 
+// - use Set to remove duplicate values, because `PROGRAMFILES` and `ProgramW6432` are often
+//   both "C:\Program Files", which, we'd check three times otherwise.
+// - it is important that this preserves order of precedence.
+// - use filter() to remove empty/unset environment variables.
+//
+// https://github.com/karma-runner/karma-chrome-launcher/blob/v3.2.0/index.js
+// https://github.com/vweevers/win-detect-browsers/blob/v7.0.0/lib/browsers.js
+const WINDOWS_DIRS = new Set([
+  process.env.LOCALAPPDATA,
+  process.env.PROGRAMFILES,
+  process.env['PROGRAMFILES(X86)'],
+  process.env.ProgramW6432,
+  'C:\\Program Files'
+].filter(Boolean));
+
 function createFirefoxPrefsJs (prefs) {
   let js = '';
   for (const key in prefs) {
@@ -135,23 +151,75 @@ function createFirefoxPrefsJs (prefs) {
 }
 
 function * getFirefoxPaths () {
-  yield process.env.FIREFOX_BIN;
-
   // Handle unix-like platforms such as linux, WSL, darwin/macOS, freebsd, openbsd.
   // Note that firefox-esr on Debian/Ubuntu includes a 'firefox' alias.
   //
   // Example: /usr/bin/firefox
+  yield process.env.FIREFOX_BIN;
   yield which.sync('firefox', { nothrow: true });
 
   if (process.platform === 'darwin') {
-    if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
-    yield '/Applications/Firefox.app/Contents/MacOS/firefox';
+    const appPath = '/Applications/Firefox.app/Contents/MacOS/firefox';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
   }
 
   if (process.platform === 'win32') {
-    if (process.env.PROGRAMFILES) yield process.env.PROGRAMFILES + '\\Mozilla Firefox\\firefox.exe';
-    if (process.env['PROGRAMFILES(X86)']) yield process.env['PROGRAMFILES(X86)'] + '\\Mozilla Firefox\\firefox.exe';
-    yield 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Mozilla Firefox\\firefox.exe';
+  }
+}
+
+function * getChromePaths () {
+  yield process.env.CHROME_BIN;
+  yield which.sync('google-chrome', { nothrow: true });
+  yield which.sync('google-chrome-stable', { nothrow: true });
+
+  if (process.platform === 'darwin') {
+    const appPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
+  }
+
+  if (process.platform === 'win32') {
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Google\\Chrome\\Application\\chrome.exe';
+  }
+}
+
+function * getChromiumPaths () {
+  // Try 'chromium-browser' first to avoid conflict with 'chromium' from chromium-bsu on Debian
+  yield process.env.CHROMIUM_BIN;
+  yield which.sync('chromium-browser', { nothrow: true });
+  yield which.sync('chromium', { nothrow: true });
+
+  if (process.platform === 'darwin') {
+    const appPath = '/Applications/Chromium.app/Contents/MacOS/Chromium';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
+  }
+
+  if (process.platform === 'win32') {
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Chromium\\Application\\chrome.exe';
+  }
+}
+
+function * getEdgePaths () {
+  // Debian packages from https://packages.microsoft.com
+  // https://learn.microsoft.com/en-us/linux/packages
+  // https://github.com/actions/runner-images/blob/1ffc99a7ae/images/ubuntu/scripts/build/install-microsoft-edge.sh#L11
+  // https://github.com/microsoft/playwright/blob/v1.49.1/packages/playwright-core/src/server/registry/index.ts#L560
+  yield process.env.EDGE_BIN;
+  yield which.sync('microsoft-edge', { nothrow: true });
+  yield which.sync('microsoft-edge-stable', { nothrow: true });
+  yield '/opt/microsoft/msedge/msedge';
+
+  if (process.platform === 'darwin') {
+    const appPath = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
+  }
+
+  if (process.platform === 'win32') {
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Microsoft\\Edge\\Application\\msedge.exe';
   }
 }
 
@@ -192,22 +260,42 @@ async function firefox (url, signal, logger) {
     'startup.homepage_welcome_url': '', // Blank start, disable extra tab
     'startup.homepage_welcome_url.additional': '', // Blank start, disable extra tab
   }));
+  await LocalBrowser.spawn(getFirefoxPaths(), args, signal, logger);
+}
 
-  await LocalBrowser.spawn(getFirefoxCandidates(), args, signal, logger);
+async function chromium (paths, url, signal, logger) {
+  const dataDir = LocalBrowser.makeTempDir();
+  // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
+  const args = [
+    '--user-data-dir=' + dataDir,
+    '--no-default-browser-check',
+    '--no-first-run',
+    '--disable-default-apps',
+    '--disable-popup-blocking',
+    '--disable-translate',
+    '--disable-background-timer-throttling',
+    ...(QTAP_DEBUG ? [] : [
+      '--headless',
+      '--disable-gpu',
+      '--disable-dev-shm-usage'
+    ]),
+    ...(process.env.CHROMIUM_FLAGS ? process.env.CHROMIUM_FLAGS.split(/\s+/) : []),
+    url
+  ];
+  await LocalBrowser.spawn(paths, args, signal, logger);
 }
 
 export default {
   LocalBrowser,
 
   firefox,
-  // https://github.com/vweevers/win-detect-browsers/blob/v7.0.0/lib/browsers.js
+  chrome: chromium.bind(null, concatGenFn(getChromePaths, getChromiumPaths, getEdgePaths)),
+  chromium: chromium.bind(null, concatGenFn(getChromiumPaths, getChromePaths, getEdgePaths)),
+  edge: chromium.bind(null, concatGenFn(getEdgePaths)),
+
   //
   // TODO: safari: [],
-  // TODO: chromium: [], // chromium+chrome+edge
-  // --no-sandbox CHROMIUM_FLAGS
 
-  // TODO: chrome: [], // chrome+chromium+edge
-  // TODO: edge: [], // edge+chrome+chromium
   // TODO: browserstack
   // - browserstack/firefox_45
   // - browserstack/firefox_previous

@@ -29,3 +29,9 @@ export function humanSeconds (msDuration) {
     .toFixed(1)
     .replace(/\.(0+)?$/, '');
 }
+
+export function * concatGenFn (...fns) {
+  for (const fn of fns) {
+    yield * fn();
+  }
+}

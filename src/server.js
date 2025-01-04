@@ -94,7 +94,7 @@ class ControlServer {
   async launchBrowser (browserFn, browserName) {
     const clientId = 'client_' + this.constructor.nextClientId++;
     const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
-    const logger = this.logger.channel(`qtap_browser_${browserName}_${clientId}`);
+    const logger = this.logger.channel(`qtap_browser_${clientId}_${browserName}`);
 
     const controller = new AbortController();
     const summary = { ok: true };
@@ -200,7 +200,7 @@ class ControlServer {
     }
 
     try {
-      logger.debug('browser_launch_start');
+      logger.debug('browser_launch_call');
       await browserFn(url, signal, logger);
       logger.debug('browser_launch_ended');
     } catch (err) {
