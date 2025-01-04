@@ -1,6 +1,6 @@
 # QTap Architecture
 
-This describes the priorities and values of the QTap project, design goals, considered alternatives, and any significant assumptions, caveats, or intentional trade-offs made during development. These serve as reference to contributors and maintainers when making future decisions, e.g. on proposed changes or reported issues.
+This describes the priorities and values of the QTap project, design goals, considered alternatives, and any significant assumptions, caveats, or intentional trade-offs made during development. These serve as reference to inform future decisions by contributors and maintainers, e.g. after proposed changes or reported issues.
 
 ## Principles
 
@@ -57,6 +57,73 @@ Set `QTAP_DEBUG=1` as environment variable, when calling the QTap CLI, to launch
 
 Set `--verbose` in the QTap CLI to enable verbose debug logging.
 
+## QTap Internal: Server
+
+### Requirements
+
+* Support simple projects where the test suite is a static HTML file and/or a list of JS files.
+  This will be passed as `qtap test/index.html` and we will automatically decide which base directory
+  to serve static files from, and automatically start a static file server for that, and point
+  browsers at our generated URL accordingly.
+
+  Why:
+  - This avoids overhead and complexity for end-users to support running in a `file:///` protocol context. This context would cause your source code to have significant differences in behaviour and restrictions, thus requiring you to support both HTTP contexts (for production) and the file protocol just for testing.
+  - This avoids missed bugs or false positives where things pass in the file protocol, but fail over HTTP.
+  - This removes the need for end-users to have to install and manage a static web server.
+    In particular picking available ports, passing dynamic URLs, and careful starting/stopping of the server. These are easy for the test runner to do, but non-trivial to do manually out of bound.
+    To avoid:
+    - [Example 1](https://github.com/gruntjs/grunt-contrib-qunit/blob/v10.1.1/Gruntfile.js): This uses grunt-contrib-qunit, with node-connect and a hardcoded port. This made it easy to configure in Gruntfile.js, but also makes it likely to conflict with other projects the user may be working on locally.
+    - [Example 2](https://github.com/qunitjs/qunit/blob/2.23.1/Gruntfile.js): This uses grunt-contrib-qunit, with node-connect and a configurable port. This allows the end-user to resolve a conflict by manually picking a different port. The user is however not likely to know or discover that this option exists, and is not likely to know what port to choose. The maintainer meanwhile has to come up with ad-hoc code to change the URLs. The `useAvailablePort` option of node-connect doesn't help since these two Grunt plugins are both configured declaratively, so while it could make node-connect use a good port, the other plugin wouldn't know about that ([workaround](https://github.com/qunitjs/qunit/commit/e77a763991a6330b68af5867cc5fccdb81edc7d0?w=1)).
+* Support applications that serve their own JS/CSS files, by letting them load source code, test suites, and the test HTML from their own URLs. This ensures you meaningfully test your source code witn the same bundler, and any generated or transformed files that your application would normally perform.
+
+  Why:
+  - This avoids maintenance costs from having to support two bundlers (the prod one, and whatever a test runner like QTap might prescribe).
+  - This avoids bugs or false positives from something that works with your test bundler, but might fail or behave differently in your production setup. E.g. missing dependencies, different compiler/transpiler settings.
+  - This avoids needless mocking of files that may be auto-generated.
+  - This allows web applications to provide automatic discovery of test suites, for both their own components, and for any plugins. For example, MediaWiki allows extensions to register test suites. When running [MediaWiki's QUnit page](https://www.mediawiki.org/wiki/Manual:JavaScript_unit_testing) in CI, MediaWiki will include tests from any extensions that are installed on that site as well. WordPress and Drupal could do something similar. Likewise, Node.js web apps that lazily bundle or transform JavaScript code may also want to make use of this.
+
+### Considerations
+
+* Proxying every single request can add a noticable delay to large test suites. If possible, we want most requests to go directly to the specified URL.
+* References to relative or absolute paths (e.g. `./foo` or `/foo` without a domain name) are likely to fail, because the browser would interpret them relative to where our proxy serves the file.
+  To avoid:
+  - Karma provided a way to [configure proxies](http://karma-runner.github.io/6.4/config/configuration-file.html#proxies) which would let you add custom paths like `/foo` to Karma's proxy server, and forward those to your application. I'd like this to placing this complexity on the end-user. Not by proxying things better or more automatically, but by not breaking these absolute references in the first place.
+  - Karma recommended against full transparent proxing (e.g. `/*`) as this would interfere with its own internal files and base directories. It'd be great to avoid imposing such limitation.
+* Invisible or non-portable HTML compromises easy debugging of your own code:
+  - [Airtap](https://github.com/airtap/airtap) takes full control over the HTML by taking only a list of JS files. While generating the HTML automatically is valuable for large projects (e.g. support wildcards, avoid manually needing to list each JS file in the HTML), this makes debugging harder as you then need to work with your test runner to debug it (disable headless, disable shutdown after test completion, enable visual test reporter). While some projects invest in a high-quality debugging experience, it's always going to lag behind what the browser offers to "normal" web pages.
+  - [Jest](https://jestjs.io/docs/api), and others that don't even run in a real browser by default, require you to hook up the Node.js/V8 inspector to Chrome to have a reasonable debugging experience. This is non-trivial for new developers, and comes with various limitations and confusing aspects that don't affect working with DevTools on regular web pages.
+  - Karma offers [configurable customDebugFile](http://karma-runner.github.io/6.4/config/configuration-file.html#customdebugfile) to let you customize (most) of the generated HTML. This is great, but comes at the cost of learning a new template file, and an extra thing to setup and maintain.
+  - [Testem](https://github.com/testem/testem/) takes an HTML-first approach, but does come with two restrictions: You have to include `<script src="/testem.js"></script>` and call `Testem.hookIntoTestFramework();`. These make the HTML file no longer work well on their own (unless you modify the snippet in undocumented ways to make these inclusions conditional and/or fail gracefully). The benefit is of course that the HTML is very transparent and inspectable (no difficult to debug magic or secret sauce).
+  - [browserstack-runner](https://github.com/browserstack/browserstack-runner) takes an HTML-first approach, and does not pose any requirements or restrictions on this HTML. It works by dynamically modifying the HTML to inject scripts at the end of the `<body>`, from which it adds relevant event listeners and hooks, which then beacon data off to your command line output. If memory serves correctly, the idea for this came partly out of conversations at [jQuery Conference 2013 Portland](https://blog.jquery.com/2013/01/25/jquery-comes-to-portland/) between the BrowserStack Team and jQuery Team, which in turn learned from [TestSwarm](https://github.com/jquery/testswarm) and its model of running existing HTML test suites as-is (QUnit, Mocha, Jasmine).
+* To receive test results on the command-line there are broadly two approaches:
+
+  **Browser-side script injection**
+
+  This means the page can be unaware of the test runner (no script tag requirement, no manual page modification). Instead you use WebDriver, Puppeteer, or a browser extension, to communicate natively with the browser and instruct it to run additional JavaScript at "the right time", from which we'd subscribe to `console.log` (or directly by adding an event listener or reporter to a unit test framework), and from there beacon the results to your command-line process.
+
+  Downside:
+  - Gap in error telemetry between the browser and page starting to load, and potentially miss the first few test results, until your script is injected. Or, yield control over when the tests begin to the test runner.
+  - Puppeteer offers a Chrome-only `Page.evaluateOnNewDocument` method which promises to run before other scripts, but, the standard WebDriver protocol has no such capability yet.
+  - For true cross-browser testing we'd want to incldue cloud browsers like BrowserStack and SauceLabs, where there are even fewer capabilities.
+
+  **Page-side script injection**
+
+  This means the end-user has to modify the page in some way. Or, the test runner introduces a mandatory proxy that modifies the page on-demand.
+
+  This has the benefit of requiring no control over the browser process. The only responsiblity of a browser launcher is to navigate to a single URL.
+
+### Approach taken
+
+* **HTML-first**. The HTML file is yours, and you can open and debug it directly in any browser, using familiar and fully capable devtools in that browser. If we generate it automatically from a one or more JavaScript file names (e.g. wildcards or glob patterns), then we'll save the file to the current working directory for transparency and ease of debugging.
+
+* **Minimal proxy**. The HTML file is served from an automatically started web server. References to relative and absolute paths work correctly, by using a `<base>` tag pointing back to the original URL. This means no proxies have to be configured by the user, no other requests have to be proxied by us, and thus no conflicts or abmiguities can arise between paths in end-user code, and paths for the test runner.
+
+  This means we need only 1 web server, which can both serve the HTML test file, and receive test results.
+
+* **Page-side script injection**. The HTML file is modified to include an inline script that subscribes to `console.log` and other events, and beacons to our command-line process. More details at [QTap Internal: Client send](#qtap-internal-client-send).
+
+  This means browser can be launched by any means, pointed at a URL, and then forgotten about until we shut it down. It requires no control over the browser process. And the requirements for someone writing a browser launcher, is thus merely to open a single URL. More details at [QTap API: Browser launcher](#qtap-internal-client-send).
+
 ## QTap API: Browser launcher
 
 Each browser is implemented as a single async function that launches the browser. The function is called with all required information and services. The [injected](https://en.wikipedia.org/wiki/Dependency_injection) parameters include a URL, an abort signal, and a logger function.
@@ -69,12 +136,13 @@ One of the passed parameters is a standard [`AbortSignal` object](https://develo
 
 ```js
 // Using our utility
-async function myBrowser(url, signal, logger) {
+async function myBrowser (url, signal, logger) {
   await LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger);
 }
 
-// Minimal custom implementation on native Node.js
-async function myBrowser(url, signal, logger) {
+// Minimal sub process
+import child_process from 'node:child_process';
+async function myBrowser (url, signal, logger) {
   logger.debug('Spawning /bin/mybrowser');
   const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
   await new Promise((resolve, reject) => {
@@ -82,9 +150,22 @@ async function myBrowser(url, signal, logger) {
     spawned.on('exit', (code) => reject(new Error(`Process exited ${code}`)));
   });
 }
+
+// Minimal custom
+async function myBrowser (url, signal, logger) {
+  // * start browser and navigate to `url`
+  // * if you encounter problems, throw
+  await new Promise((resolve, reject) => {
+    // * once browser has stopped, call resolve()
+    // * if you encounter problems, call reject()
+    signal.addEventListener('abort', () => {
+      // stop browser
+    });
+  });
+}
 ```
 
-Alternatives considered:
+### Alternatives considered
 
 * **Base class** that plugins must extend, with one or more stub methods to be implemented such as `getPaths`, `getArguments`, `launch`, and `stop`.
 
@@ -150,14 +231,13 @@ Alternatives considered:
   // Using our utility
   import qtap from 'qtap';
 
-  function myBrowser (url, signal, logger) {
+  async function myBrowser (url, signal, logger) {
     await qtap.LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger );
   }
 
-  // Minimal custom implementation
+  // Minimal sub process
   import child_process from 'node:child_process';
-
-  function myBrowser (url, signal, logger) {
+  async function myBrowser (url, signal, logger) {
     const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
     await new Promise((resolve, reject) => {
       spawned.on('error', (error) => {
@@ -217,9 +297,9 @@ The clientId is only unique to a single qtap process and thus should not be used
 
 ## QTap Internal: Client send
 
-Source code: [function qtapClientHead](./src/server.js).
+_See also: `function qtapClientHead` in [/src/server.js](./src/server.js)_.
 
-Goals:
+### Requirements
 
 * Report results from browser client to CLI as fast as possible.
 
@@ -232,7 +312,7 @@ Goals:
   - most of their unit tests loaded and executed correctly,
   - one of their tests has finished executing.
 
-Approaches considered:
+### Approaches
 
 * **Fixed debounce**, e.g. `setTimeout(send, 200)`.
 
@@ -263,3 +343,68 @@ Approaches considered:
   E.g. `setTimeout(send,0) + XHR.onload` to dictate frequency.
 
   The first chunk will include everything until the current event loop tick has been exhausted, thus including not just the first line but also the entirety of the first real result. Waiting for `XHR.onload` naturally ensures correct ordering, and naturally responds to changes in latency and back pressure.
+
+## QTap Internal: Safari launcher
+
+Safari has long resisted the temptation to offer a reasonable command-line interface. Below is the state of the art as known in January 2025.
+
+* `Safari <file>`. This argument does not permit URLs in practice. Safari allows only local file paths.
+
+* `Safari redirect.html`, without other arguments, worked from 2012-2018 and was used by Karma.
+
+  You create a temporary HTML file, which acts as "trampoline", using `<script>window.location='<url>';</script>` to redirect the browser. You then open Safari with the path to this file instead of the URL.
+
+  - https://github.com/karma-runner/karma-safari-launcher/blob/v1.0.0/index.js
+  - https://github.com/karma-runner/karma/blob/v0.3.5/lib/launcher.js#L213
+  - https://github.com/karma-runner/karma/commit/5513fd66ae
+
+  This approach is no longer viable since 2018 (after macOS 10.14 Mojave), because macOS SIP will put up a blocking permission prompts in the GUI, due to our temporary file being outside `~/Library/Containers/com.apple.Safari`.
+
+  - https://github.com/karma-runner/karma-safari-launcher/issues/29
+
+* `open -F -W -n -b com.apple.Safari <url>`. This starts correctly, but doesn't expose a PID to cleanly end the process.
+
+  - https://github.com/karma-runner/karma-safari-launcher/issues/29
+
+* `Safari container/redirect.html`. macOS SIP denies this by default for the same reason. But, as long as you grant an exemption to Terminal to write to Safari's container, or grant it Full Disk Access, this is viable.
+
+  It seems that GitHub CI even pre-approves limited access to Terminal in its macOS images, to make this work. <sup>[[1]][[2]]</sup> This might thus be viable if you only support GitHub CI, and if you find it tolerable to have a blocking GUI prompt on first local use, and require granting said access to the Terminal app (which has lasting consequences beyond QTap, and there won't be a GUI prompt if the user previously denied this for other programs).
+
+  - https://github.com/flutter/engine/pull/27567
+  - https://github.com/marcoscaceres/karma-safaritechpreview-launcher/issues/7
+
+* **native Swift/ObjectiveC app**. This reportedly works. The tiny app does nothing more than call `LSLaunchURLSpec` from the Mac SDK in Swift or ObjectiveC, akin to how the user might click a link in a messaging app which then opens the browser, and works similar to the `open` approach above. This approach requires distributing a binary, compilation, and makes auditing significantly harder. It is also unclear if this could wait for and subsequently close the tab/browser.
+
+  - https://github.com/karma-runner/karma-safari-launcher/issues/29
+  - https://github.com/muthu90ec/karma-safarinative-launcher/
+
+* `osascript -e <script>`
+
+  As of macOS 13 Ventura (or earlier?), this results in a prompt for "Terminal wants access to control Safari", from which osascript will eventually timeout and report "Safari got an error: AppleEvent timed out".
+
+  While past discussions suggest that GitHub CI has this pre-approved,<sup>[[1]][[2]]</sup> as of writing in Jan 2025 with macOS 13 images, this approval does not include access from Terminal to Safari, thus causing the same "AppleEvent timed out".
+
+  - https://github.com/brandonocasey/karma-safari-applescript-launcher
+  - https://github.com/brandonocasey/karma-safari-applescript-launcher/issues/5
+
+* `osascript MyScript.scpt`. This avoids the need for quote escaping in the URL, by injecting it properly as a parameter instead. Used by Google's karma-webkit-launcher. https://github.com/google/karma-webkit-launcher/commit/31a2ad8037
+
+* `safaridriver -p <port>` ⭐️ _Chosen approach_
+
+  Start driver, and then make HTTP requests to create a session, navigate the session, and to delete the session.
+
+  This addresses all previous concerns, and seems to be the best as of 2025. The only downside is that it requires a bit more code to setup (find available port, and perform various HTTP requests).
+
+  - https://webkit.org/blog/6900/webdriver-support-in-safari-10/
+  - https://developer.apple.com/documentation/webkit/macos-webdriver-commands-for-safari-12-and-later
+  - Inspired by https://github.com/flutter/engine/pull/33757
+
+### See also
+
+Other interesting discussions:
+
+* Testem (unresolved as of Jan 2025), https://github.com/testem/testem/issues/1387
+* Ember.js (unresolved as of Jan 2025), https://github.com/emberjs/data/issues/7170
+
+[1]: https://github.com/actions/runner-images/issues/4201
+[2]: https://github.com/actions/runner-images/issues/7531

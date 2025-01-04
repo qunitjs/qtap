@@ -14,6 +14,9 @@ export default [
   {
     rules: {
       'comma-dangle': 'off',
+      'multiline-ternary': 'off',
+      'no-throw-literal': 'off',
+      'object-shorthand': 'off',
       'operator-linebreak': ['error', 'before'],
     }
   }

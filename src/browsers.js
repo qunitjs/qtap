@@ -1,130 +1,28 @@
 'use strict';
 
-import cp from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import which from 'which';
+import safari from './safari.js';
+import { concatGenFn, LocalBrowser } from './util.js';
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
-const tempDirs = [];
 
-const LocalBrowser = {
-  /**
-   * @param {string|Array<string|null>|Iterator<string|null>} paths
-   *  Path to an executable command or an iterable list of candidate paths to
-   *  check and use the first one that exists.
-   *
-   *  If you need to vary list items by platform or environment variables, it may
-   *  be easier to write your list as a generator function with as little or much
-   *  conditional logic around yield statements as-needed.
-   *
-   *  Any `undefined` or `null` entries are automatically skipped, to make it
-   *  easy to include the result of `process.env.YOUR_KEY` or `which.sync()`.
-   *
-   *  See getFirefoxPaths for an example.
-   *
-   * @param {Array<string>} args List of string arguments, passed to child_process.spawn()
-   *  which will automatically quote and escape these.
-   * @param {AbortSignal} signal
-   * @return {Promise}
-   */
-  async spawn (paths, args, signal, logger) {
-    if (typeof paths === 'string') {
-      paths = [paths];
-    }
-    let exe;
-    for (const candidate of paths) {
-      if (candidate !== undefined && candidate !== null) {
-        // Optimization: Use fs.existsSync. It is on par with accessSync and statSync,
-        // and beats concurrent fs/promises.access(cb) via Promise.all().
-        // Starting the promise chain alone takes the same time as a loop with
-        // 5x existsSync(), not even counting the await and boilerplate to manage it all.
-        if (fs.existsSync(candidate)) {
-          logger.debug('browser_exe_found', candidate);
-          exe = candidate;
-          break;
-        } else {
-          logger.debug('browser_exe_check', candidate);
-        }
-      }
-    }
-    if (!exe) {
-      throw new Error('No executable found');
-    }
-
-    logger.debug('browser_exe_spawn', exe, args);
-    const spawned = cp.spawn(exe, args, { signal });
-
-    let stdout = '';
-    let stderr = '';
-    spawned.stdout.on('data', data => {
-      stdout += data;
-    });
-    spawned.stderr.on('data', data => {
-      stderr += data;
-    });
-
-    return new Promise((resolve, reject) => {
-      spawned.on('error', error => {
-        if (signal.aborted) {
-          resolve();
-        } else {
-          logger.debug('browser_exe_error', error);
-          reject(error);
-        }
-      });
-      spawned.on('exit', (code, sig) => {
-        const indent = (str) => str.trim().split('\n').map(line => '    ' + line).join('\n');
-        const details = 'Process exited'
-          + `\n  exit code: ${code}`
-          + (sig ? `\n  signal: ${sig}` : '')
-          + (stderr ? `\n  stderr:\n${indent(stderr)}` : '')
-          + (stdout ? `\n  stdout:\n${indent(stdout)}` : '');
-        if (!signal.aborted) {
-          reject(new Error(details));
-        } else {
-          logger.debug('browser_natural_exit', details);
-          resolve();
-        }
-      });
-    });
-  },
-
-  /**
-   * Create a new temporary directory and return its name.
-   *
-   * The newly created directory will automatically will cleaned up.
-   *
-   * @returns {string}
-   */
-  makeTempDir () {
-    // Use mkdtemp (instead of only tmpdir) to avoid clash with past or concurrent qtap procesess.
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_'));
-    tempDirs.push(dir);
-    return dir;
-  },
-
-  rmTempDirs (logger) {
-    // On Windows, after spawn() returns for a stopped firefox.exe, we sometimes can't delete
-    // a temporary file because it is somehow still in use (EBUSY). Perhaps a race condition,
-    // or an lagged background process?
-    // > BUSY: resource busy or locked,
-    // > unlink 'C:\Users\RUNNER~1\AppData\Local\Temp\qtap_EZ4IoO\bounce-tracking-protection.sqlite'
-    //
-    // Workaround: Enable `maxRetries` in case we just need to wait a little bit, and beyond that
-    // use a try-catch to ignore a failed retry, because it is not critical for test completion.
-    for (const dir of tempDirs) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
-      } catch (e) {
-        logger.warning('browser_rmtempdir_fail', e);
-      }
-    }
-    tempDirs.length = 0;
-  }
-};
+// - use Set to remove duplicate values, because `PROGRAMFILES` and `ProgramW6432` are often
+//   both "C:\Program Files", which, we'd check three times otherwise.
+// - it is important that this preserves order of precedence.
+// - use filter() to remove empty/unset environment variables.
+//
+// https://github.com/karma-runner/karma-chrome-launcher/blob/v3.2.0/index.js
+// https://github.com/vweevers/win-detect-browsers/blob/v7.0.0/lib/browsers.js
+const WINDOWS_DIRS = new Set([
+  process.env.LOCALAPPDATA,
+  process.env.PROGRAMFILES,
+  process.env['PROGRAMFILES(X86)'],
+  process.env.ProgramW6432,
+  'C:\\Program Files'
+].filter(Boolean));
 
 function createFirefoxPrefsJs (prefs) {
   let js = '';
@@ -135,23 +33,75 @@ function createFirefoxPrefsJs (prefs) {
 }
 
 function * getFirefoxPaths () {
-  yield process.env.FIREFOX_BIN;
-
   // Handle unix-like platforms such as linux, WSL, darwin/macOS, freebsd, openbsd.
   // Note that firefox-esr on Debian/Ubuntu includes a 'firefox' alias.
   //
   // Example: /usr/bin/firefox
+  yield process.env.FIREFOX_BIN;
   yield which.sync('firefox', { nothrow: true });
 
   if (process.platform === 'darwin') {
-    if (process.env.HOME) yield process.env.HOME + '/Applications/Firefox.app/Contents/MacOS/firefox';
-    yield '/Applications/Firefox.app/Contents/MacOS/firefox';
+    const appPath = '/Applications/Firefox.app/Contents/MacOS/firefox';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
   }
 
   if (process.platform === 'win32') {
-    if (process.env.PROGRAMFILES) yield process.env.PROGRAMFILES + '\\Mozilla Firefox\\firefox.exe';
-    if (process.env['PROGRAMFILES(X86)']) yield process.env['PROGRAMFILES(X86)'] + '\\Mozilla Firefox\\firefox.exe';
-    yield 'C:\\Program Files\\Mozilla Firefox\\firefox.exe';
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Mozilla Firefox\\firefox.exe';
+  }
+}
+
+function * getChromePaths () {
+  yield process.env.CHROME_BIN;
+  yield which.sync('google-chrome', { nothrow: true });
+  yield which.sync('google-chrome-stable', { nothrow: true });
+
+  if (process.platform === 'darwin') {
+    const appPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
+  }
+
+  if (process.platform === 'win32') {
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Google\\Chrome\\Application\\chrome.exe';
+  }
+}
+
+function * getChromiumPaths () {
+  // Try 'chromium-browser' first to avoid conflict with 'chromium' from chromium-bsu on Debian
+  yield process.env.CHROMIUM_BIN;
+  yield which.sync('chromium-browser', { nothrow: true });
+  yield which.sync('chromium', { nothrow: true });
+
+  if (process.platform === 'darwin') {
+    const appPath = '/Applications/Chromium.app/Contents/MacOS/Chromium';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
+  }
+
+  if (process.platform === 'win32') {
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Chromium\\Application\\chrome.exe';
+  }
+}
+
+function * getEdgePaths () {
+  // Debian packages from https://packages.microsoft.com
+  // https://learn.microsoft.com/en-us/linux/packages
+  // https://github.com/actions/runner-images/blob/1ffc99a7ae/images/ubuntu/scripts/build/install-microsoft-edge.sh#L11
+  // https://github.com/microsoft/playwright/blob/v1.49.1/packages/playwright-core/src/server/registry/index.ts#L560
+  yield process.env.EDGE_BIN;
+  yield which.sync('microsoft-edge', { nothrow: true });
+  yield which.sync('microsoft-edge-stable', { nothrow: true });
+  yield '/opt/microsoft/msedge/msedge';
+
+  if (process.platform === 'darwin') {
+    const appPath = '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge';
+    if (process.env.HOME) yield process.env.HOME + appPath;
+    yield appPath;
+  }
+
+  if (process.platform === 'win32') {
+    for (const dir of WINDOWS_DIRS) yield dir + '\\Microsoft\\Edge\\Application\\msedge.exe';
   }
 }
 
@@ -192,22 +142,42 @@ async function firefox (url, signal, logger) {
     'startup.homepage_welcome_url': '', // Blank start, disable extra tab
     'startup.homepage_welcome_url.additional': '', // Blank start, disable extra tab
   }));
+  await LocalBrowser.spawn(getFirefoxPaths(), args, signal, logger);
+}
 
-  await LocalBrowser.spawn(getFirefoxCandidates(), args, signal, logger);
+async function chromium (paths, url, signal, logger) {
+  const dataDir = LocalBrowser.makeTempDir();
+  // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
+  const args = [
+    '--user-data-dir=' + dataDir,
+    '--no-default-browser-check',
+    '--no-first-run',
+    '--disable-default-apps',
+    '--disable-popup-blocking',
+    '--disable-translate',
+    '--disable-background-timer-throttling',
+    ...(QTAP_DEBUG ? [] : [
+      '--headless',
+      '--disable-gpu',
+      '--disable-dev-shm-usage'
+    ]),
+    ...(process.env.CHROMIUM_FLAGS ? process.env.CHROMIUM_FLAGS.split(/\s+/) : (
+      process.env.CI ? ['--no-sandbox'] : [])
+    ),
+    url
+  ];
+  await LocalBrowser.spawn(paths, args, signal, logger);
 }
 
 export default {
   LocalBrowser,
 
   firefox,
-  // https://github.com/vweevers/win-detect-browsers/blob/v7.0.0/lib/browsers.js
-  //
-  // TODO: safari: [],
-  // TODO: chromium: [], // chromium+chrome+edge
-  // --no-sandbox CHROMIUM_FLAGS
+  chrome: chromium.bind(null, concatGenFn(getChromePaths, getChromiumPaths, getEdgePaths)),
+  chromium: chromium.bind(null, concatGenFn(getChromiumPaths, getChromePaths, getEdgePaths)),
+  edge: chromium.bind(null, concatGenFn(getEdgePaths)),
+  safari,
 
-  // TODO: chrome: [], // chrome+chromium+edge
-  // TODO: edge: [], // edge+chrome+chromium
   // TODO: browserstack
   // - browserstack/firefox_45
   // - browserstack/firefox_previous
