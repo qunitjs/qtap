@@ -99,7 +99,7 @@ class ControlServer {
     const controller = new AbortController();
     const summary = { ok: true };
 
-    const CLIENT_IDLE_TIMEOUT = 5000;
+    const CLIENT_IDLE_TIMEOUT = 60_000;
     const CLIENT_IDLE_INTERVAL = 1000;
     let clientIdleTimer = null;
 
@@ -137,21 +137,21 @@ class ControlServer {
     };
 
     const tapFinishFinder = tapFinished({ wait: 0 }, () => {
-      logger.debug('browser_tap_finished', 'Requesting browser stop');
+      logger.debug('browser_tap_finished', 'Test has finished, stopping browser');
 
       stopBrowser('QTap: browser_tap_finished');
     });
 
     const tapParser = new TapParser();
     tapParser.on('bailout', (reason) => {
+      logger.warning('browser_tap_bailout', `Test ended unexpectedly, stopping browser. Reason: ${reason}`);
       summary.ok = false;
-      logger.debug('browser_tap_bailout', reason);
 
       stopBrowser('QTap: browser_tap_bailout');
     });
     tapParser.once('fail', () => {
+      logger.debug('browser_tap_fail', 'Results indicate at least one test has failed assertions');
       summary.ok = false;
-      logger.debug('browser_tap_fail', 'One or more tests failed');
     });
     // Debugging
     // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
@@ -176,7 +176,7 @@ class ControlServer {
     // creating tons of timers when processing a large batch of test results back-to-back.
     clientIdleTimer = setTimeout(function qtapClientTimeout () {
       if ((performance.now() - browser.clientIdleActive) > CLIENT_IDLE_TIMEOUT) {
-        logger.debug('browser_idle_timeout', 'Requesting browser stop');
+        logger.warning('browser_idle_timeout', `Browser timed out after ${CLIENT_IDLE_TIMEOUT}ms, stopping browser`);
         // TODO:
         // Produce a tap line to report this test failure to CLI output/reporters.
         summary.ok = false;
@@ -318,7 +318,12 @@ class ControlServer {
 
     const clientId = url.searchParams.get('qtap_clientId');
     if (url.pathname === '/' && clientId !== null) {
-      this.logger.debug('respond_static_testfile', clientId);
+      const browser = this.browsers.get(clientId);
+      if (browser) {
+        browser.logger.debug('browser_connected', 'Browser connected! Serving test file.');
+      } else {
+        this.logger.debug('respond_static_testfile', clientId);
+      }
       resp.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || MIME_TYPES.html });
       resp.write(await this.getTestFile(clientId));
       resp.end();

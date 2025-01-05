@@ -20,6 +20,9 @@ export const MIME_TYPES = {
   woff: 'font/woff',
 };
 
+export const globalController = new AbortController();
+export const globalSignal = globalController.signal;
+
 /**
  * @param {number} msDuration
  * @returns {string} Something like "0.7", "2", or "3.1"

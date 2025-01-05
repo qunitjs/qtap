@@ -57,3 +57,7 @@ jobs:
 
       - name: Check system browsers
         run: node bin/qtap.js -v -b firefox -b chrome -b chromium -b edge test/pass.html
+
+      - name: Check system browsers (Safari)
+        if: ${{ runner.os == 'macOS' }}
+        run: node bin/qtap.js -v -b safari test/pass.html

@@ -69,17 +69,31 @@ One of the passed parameters is a standard [`AbortSignal` object](https://develo
 
 ```js
 // Using our utility
-async function myBrowser(url, signal, logger) {
+async function myBrowser (url, signal, logger) {
   await LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger);
 }
 
-// Minimal custom implementation on native Node.js
-async function myBrowser(url, signal, logger) {
+// Minimal sub process
+import child_process from 'node:child_process';
+async function myBrowser (url, signal, logger) {
   logger.debug('Spawning /bin/mybrowser');
   const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
   await new Promise((resolve, reject) => {
     spawned.on('error', (error) => reject(error));
     spawned.on('exit', (code) => reject(new Error(`Process exited ${code}`)));
+  });
+}
+
+// Minimal custom
+async function myBrowser (url, signal, logger) {
+  // * start browser and navigate to `url`
+  // * if you encounter problems, throw
+  await new Promise((resolve, reject) => {
+    // * once browser has stopped, call resolve()
+    // * if you encounter problems, call reject()
+    signal.addEventListener('abort', () => {
+      // stop browser
+    });
   });
 }
 ```
@@ -150,14 +164,13 @@ Alternatives considered:
   // Using our utility
   import qtap from 'qtap';
 
-  function myBrowser (url, signal, logger) {
+  async function myBrowser (url, signal, logger) {
     await qtap.LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger );
   }
 
-  // Minimal custom implementation
+  // Minimal sub process
   import child_process from 'node:child_process';
-
-  function myBrowser (url, signal, logger) {
+  async function myBrowser (url, signal, logger) {
     const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
     await new Promise((resolve, reject) => {
       spawned.on('error', (error) => {
