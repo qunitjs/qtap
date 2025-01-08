@@ -99,6 +99,7 @@ class ControlServer {
     const controller = new AbortController();
     const summary = { ok: true };
 
+    // TODO: Separate initial connection timeout from idle timeout
     const CLIENT_IDLE_TIMEOUT = 60_000;
     const CLIENT_IDLE_INTERVAL = 1000;
     let clientIdleTimer = null;
@@ -247,6 +248,9 @@ class ControlServer {
         return qtapNativeLog.apply(this, arguments);
       };
 
+      // TODO: Forward console.warn, console.error, and onerror to server.
+      // TODO: Report window.onerror as TAP comment, visible by default.
+      // TODO: Report console.warn/console.error in --verbose mode.
       window.addEventListener('error', function (error) {
         console.log('Script error: ' + (error.message || 'Unknown error'));
       });

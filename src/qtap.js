@@ -3,9 +3,9 @@
 import util from 'node:util';
 
 import kleur from 'kleur';
-
-import { ControlServer } from './server.js';
 import browsers from './browsers.js';
+import { ControlServer } from './server.js';
+import { globalController, globalSignal } from './util.js';
 
 function makeLogger (defaultChannel, printError, printDebug = null) {
   const paramsFmt = (params) => params
@@ -99,6 +99,9 @@ async function run (browserNames, files, options) {
     for (const launched of browserLaunches) {
       await launched;
     }
+
+    logger.debug('shared_cleanup', 'Invoke globalSignal to clean up shared resources');
+    globalController.abort();
   } finally {
     browsers.LocalBrowser.rmTempDirs(logger);
 
@@ -137,5 +140,9 @@ async function run (browserNames, files, options) {
 }
 
 export default {
-  run
+  run,
+
+  browsers,
+  LocalBrowser: browsers.LocalBrowser,
+  globalSignal,
 };
