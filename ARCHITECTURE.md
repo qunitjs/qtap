@@ -39,7 +39,7 @@ Examples:
 * We will directly depend on at most 5 npm packages. Requirements for dependencies:
 
   * must solve a non-trivial problem, e.g. something that is not easily implemented in under 50 lines of code that we could write once ourselvers and then use long-term without changes.
-  * may not exceed 10KB in size (before gzip), and may carry at most 1 indirect or transitive dependency which in turn must have zero dependencies.
+  * may not exceed 100KB in size (as measured by `https://registry.npmjs.org/PACKAGE/-/PACKAGE-VERSION.tgz`), and may carry at most 4 indirect or transitive dependencies in total.
   * must be audited and understood by us as if it were our own code, including each time before we upgrade the version we depend on.
   * may not be directly exposed to end-users (whether QTap CLI or QTap Node.js API), so that we could freely upgrade, replace, or remove it in a semver-minor release.
 

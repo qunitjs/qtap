@@ -6,9 +6,9 @@ import http from 'node:http';
 import path from 'node:path';
 import stream from 'node:stream';
 
-import { Parser as TapParser } from 'tap-parser';
-import tapFinished from '@tapjs/tap-finished';
+import { qtapClientHead, qtapClientBody } from './client.js';
 import { MIME_TYPES, humanSeconds } from './util.js';
+import tapFinished from './tap-finished.js';
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 
@@ -17,9 +17,9 @@ class ControlServer {
   static nextClientId = 1;
 
   /**
-   * @param {Mixed} root
-   * @param {Mixed} testFile
-   * @param {Mixed} logger
+   * @param {any} root
+   * @param {any} testFile
+   * @param {any} logger
    * @param {Object} options
    * @param {number|undefined} options.idleTimeout
    * @param {number|undefined} options.connectTimeout
@@ -41,19 +41,20 @@ class ControlServer {
     this.idleTimeout = options.idleTimeout || 3;
     this.connectTimeout = options.connectTimeout || 60;
     this.browsers = new Map();
-    this.logger = logger.channel('qtap_server_' + this.constructor.nextServerId++);
+    this.logger = logger.channel('qtap_server_' + ControlServer.nextServerId++);
     // Optimization: Prefetch test file in parallel with server starting and browser launching.
     // Once browsers are launched and they make their first HTTP request,
     // we'll await this in handleRequest/getTestFile.
     this.testFilePromise = this.fetchTestFile(this.testFile);
 
     const server = http.createServer();
-    this.proxyBase = null;
 
     // Optimization: Allow qtap.js to proceed and load browser functions.
     // We'll await this later in launchBrowser().
+    this.proxyBase = '';
     this.proxyBasePromise = new Promise((resolve) => {
       server.on('listening', () => {
+        // @ts-ignore - Not null after listen()
         this.proxyBase = 'http://localhost:' + server.address().port;
         this.logger.debug('server_listening', `Serving ${this.testFile} at ${this.proxyBase}`);
         resolve(this.proxyBase);
@@ -61,8 +62,8 @@ class ControlServer {
     });
 
     /**
-     * @param {node:http.IncomingMessage} req
-     * @param {node:http.ServerResponse} resp
+     * @param {http.IncomingMessage} req
+     * @param {http.ServerResponse} resp
      */
     server.on('request', async (req, resp) => {
       try {
@@ -77,7 +78,7 @@ class ControlServer {
         }
       } catch (e) {
         this.logger.warning('respond_uncaught', e);
-        this.serveError(resp, 500, e);
+        this.serveError(resp, 500, /** @type {Error} */ (e));
       }
     });
 
@@ -85,15 +86,18 @@ class ControlServer {
     server.listen();
 
     this.close = () => {
+      if (this.closeCalled) {
+        throw new Error('ControlServer.close must only be called once');
+      }
+      this.closeCalled = true;
+
       this.logger.debug('http_close');
       server.close();
       server.closeAllConnections();
-      // Strictly "call only once"
-      this.close = null;
     };
   }
 
-  /** @return {string} HTML */
+  /** @return {Promise<string>} HTML */
   async fetchTestFile (file) {
     // As of Node.js 21, fetch() does not yet support file URLs.
     return this.isURL(file)
@@ -102,7 +106,7 @@ class ControlServer {
   }
 
   async launchBrowser (browserFn, browserName) {
-    const clientId = 'client_' + this.constructor.nextClientId++;
+    const clientId = 'client_' + ControlServer.nextClientId++;
     const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
     const logger = this.logger.channel(`qtap_browser_${clientId}_${browserName}`);
 
@@ -140,7 +144,7 @@ class ControlServer {
     // 2. tap-parser 'bailout' event (client knows it crashed),
     //    because tap-finished doesn't handle this.
     // 3. timeout after browser has not been idle for too long
-    //   (likely failed to start, lost connection, or crashed unknowingly)
+    //    (likely failed to start, lost connection, or crashed unknowingly).
 
     const stopBrowser = async (reason) => {
       clearTimeout(clientIdleTimer);
@@ -148,13 +152,12 @@ class ControlServer {
       controller.abort(reason);
     };
 
-    const tapFinishFinder = tapFinished({ wait: 0 }, () => {
+    const tapParser = tapFinished({ wait: 0 }, () => {
       logger.debug('browser_tap_finished', 'Test has finished, stopping browser');
 
       stopBrowser('QTap: browser_tap_finished');
     });
 
-    const tapParser = new TapParser();
     tapParser.on('bailout', (reason) => {
       logger.warning('browser_tap_bailout', `Test ended unexpectedly, stopping browser. Reason: ${reason}`);
       summary.ok = false;
@@ -185,9 +188,9 @@ class ControlServer {
       }
     }, TIMEOUT_CHECK_INTERVAL_MS);
 
-    const [readeableForParser, readableForFinished] = readable.tee();
-    readeableForParser.pipeTo(stream.Writable.toWeb(tapParser));
-    readableForFinished.pipeTo(stream.Writable.toWeb(tapFinishFinder));
+    // @ts-ignore - tap-parser does implement a Node.js-compatible writable stream,
+    // but TypeScript is stumbling on some unrelated properties from a newer Node.js.
+    readable.pipeTo(stream.Writable.toWeb(tapParser));
 
     let signal = controller.signal;
     if (QTAP_DEBUG) {
@@ -211,56 +214,6 @@ class ControlServer {
   }
 
   async getTestFile (clientId) {
-    /* eslint-disable no-undef, no-var -- Browser code */
-    function qtapClientHead () {
-      // Support QUnit 3.0+: Enable TAP reporter, declaratively.
-      window.qunit_config_reporters_tap = true;
-
-      // See ARCHITECTURE.md#qtap-internal-client-send
-      var qtapNativeLog = console.log;
-      var qtapBuffer = '';
-      var qtapShouldSend = true;
-      function qtapSend () {
-        var body = qtapBuffer;
-        qtapBuffer = '';
-        qtapShouldSend = false;
-
-        var xhr = new XMLHttpRequest();
-        xhr.onload = xhr.onerror = () => {
-          qtapShouldSend = true;
-          if (qtapBuffer) {
-            qtapSend();
-          }
-        };
-        xhr.open('POST', '{{QTAP_URL}}', true);
-        xhr.send(body);
-      }
-      console.log = function qtapLog (str) {
-        if (typeof str === 'string') {
-          qtapBuffer += str + '\n';
-          if (qtapShouldSend) {
-            qtapShouldSend = false;
-            setTimeout(qtapSend, 0);
-          }
-        }
-        return qtapNativeLog.apply(this, arguments);
-      };
-
-      // TODO: Forward console.warn, console.error, and onerror to server.
-      // TODO: Report window.onerror as TAP comment, visible by default.
-      // TODO: Report console.warn/console.error in --verbose mode.
-      window.addEventListener('error', function (error) {
-        console.log('Script error: ' + (error.message || 'Unknown error'));
-      });
-    }
-    function qtapClientBody () {
-      // Support QUnit 2.16 - 2.22: Enable TAP reporter, procedurally.
-      if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
-        QUnit.reporters.tap.init(QUnit);
-      }
-    }
-    /* eslint-enable no-undef, no-var */
-
     const proxyBase = await this.getProxyBase();
     function fnToStr (fn) {
       return fn
@@ -437,13 +390,14 @@ class ControlServer {
   }
 
   /**
-   * @param {node:http.ServerResponse} resp
+   * @param {http.ServerResponse} resp
    * @param {number} statusCode
    * @param {string|Error} e
    */
   serveError (resp, statusCode, e) {
     if (!resp.headersSent) {
       resp.writeHead(statusCode, { 'Content-Type': MIME_TYPES.txt });
+      // @ts-ignore - Definition lacks Error.stack
       resp.write((e.stack || String(e)) + '\n');
     }
     resp.end();

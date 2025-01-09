@@ -6,6 +6,7 @@ import path from 'node:path';
 import which from 'which';
 import safari from './safari.js';
 import { concatGenFn, LocalBrowser } from './util.js';
+/** @import { Logger } from './qtap.js' */
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 
@@ -24,6 +25,10 @@ const WINDOWS_DIRS = new Set([
   'C:\\Program Files'
 ].filter(Boolean));
 
+/**
+ * @param {Object<string,string|boolean|number>} prefs
+ * @return {string}
+ */
 function createFirefoxPrefsJs (prefs) {
   let js = '';
   for (const key in prefs) {
@@ -105,6 +110,11 @@ function * getEdgePaths () {
   }
 }
 
+/**
+ * @param {string} url
+ * @param {AbortSignal} signal
+ * @param {Logger} logger
+ */
 async function firefox (url, signal, logger) {
   const profileDir = LocalBrowser.makeTempDir();
   const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
@@ -145,6 +155,12 @@ async function firefox (url, signal, logger) {
   await LocalBrowser.spawn(getFirefoxPaths(), args, signal, logger);
 }
 
+/**
+ * @param {Generator<string>} paths
+ * @param {string} url
+ * @param {AbortSignal} signal
+ * @param {Logger} logger
+ */
 async function chromium (paths, url, signal, logger) {
   // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
   const dataDir = LocalBrowser.makeTempDir();
