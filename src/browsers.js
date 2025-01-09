@@ -146,8 +146,8 @@ async function firefox (url, signal, logger) {
 }
 
 async function chromium (paths, url, signal, logger) {
-  const dataDir = LocalBrowser.makeTempDir();
   // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
+  const dataDir = LocalBrowser.makeTempDir();
   const args = [
     '--user-data-dir=' + dataDir,
     '--no-default-browser-check',

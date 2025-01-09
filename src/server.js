@@ -16,7 +16,15 @@ class ControlServer {
   static nextServerId = 1;
   static nextClientId = 1;
 
-  constructor (root, testFile, logger) {
+  /**
+   * @param {Mixed} root
+   * @param {Mixed} testFile
+   * @param {Mixed} logger
+   * @param {Object} options
+   * @param {number|undefined} options.idleTimeout
+   * @param {number|undefined} options.connectTimeout
+   */
+  constructor (root, testFile, logger, options) {
     if (!root) {
       // For `qtap test/index.html`, default root to cwd.
       root = process.cwd();
@@ -30,6 +38,8 @@ class ControlServer {
 
     this.root = root;
     this.testFile = testFile;
+    this.idleTimeout = options.idleTimeout || 3;
+    this.connectTimeout = options.connectTimeout || 60;
     this.browsers = new Map();
     this.logger = logger.channel('qtap_server_' + this.constructor.nextServerId++);
     // Optimization: Prefetch test file in parallel with server starting and browser launching.
@@ -99,10 +109,11 @@ class ControlServer {
     const controller = new AbortController();
     const summary = { ok: true };
 
-    // TODO: Separate initial connection timeout from idle timeout
-    const CLIENT_IDLE_TIMEOUT = 60_000;
-    const CLIENT_IDLE_INTERVAL = 1000;
     let clientIdleTimer = null;
+    // TODO: Actually implement CONNECT_TIMEOUT
+    // const CONNECT_TIMEOUT = this.connectTimeout;
+    const IDLE_TIMEOUT = this.idleTimeout;
+    const TIMEOUT_CHECK_INTERVAL_MS = 1000;
 
     let readableController;
     const readable = new ReadableStream({
@@ -158,34 +169,21 @@ class ControlServer {
     // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
     // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
 
-    // TODO: Make timeout configurable, e.g. --timeout=3000s
-    //
-    // TODO: Consider handling timeout client-side by setting options.timeout to
-    // qunit_config_testtimeout in getTestFile() and send a "Bail out!" tap
-    // message which makes the server stop the browser.
-    // Pro - timeouts are in sync. Con - we still need a "real" timeout
-    // on this side.
-    //
-    // TODO: Dynamically increase this to whatever timeout the client's test framework
-    // has set (QUnit, Mocha, Jasmine), with one second tolerance added for delay
-    // (network/interprocess) between client and QTap.
-    // We could probably read out smth like QUnit.config.testTimeout
-    // and collect it via an endpoint like /.qtap/set_timeout?clientId=
-    //
-    // NOTE: We use performance.now() instead of natively clearTimeout+setTimeout
-    // on each event, because that would add significant overhead from Node.js/V8
-    // creating tons of timers when processing a large batch of test results back-to-back.
-    clientIdleTimer = setTimeout(function qtapClientTimeout () {
-      if ((performance.now() - browser.clientIdleActive) > CLIENT_IDLE_TIMEOUT) {
-        logger.warning('browser_idle_timeout', `Browser timed out after ${CLIENT_IDLE_TIMEOUT}ms, stopping browser`);
+    // Optimization: The naive approach would be to clearTimeout+setTimeout on every tap line, in
+    // readableController or `tapParser.on('line')`. That would add significant overhead from
+    // Node.js/V8 natively allocating many timers when processing large batches of test results.
+    // Instead, merely store performance.now() and check that periodically.
+    clientIdleTimer = setTimeout(function qtapCheckTimeout () {
+      if ((performance.now() - browser.clientIdleActive) > (IDLE_TIMEOUT * 1000)) {
+        logger.warning('browser_idle_timeout', `Browser timed out after ${IDLE_TIMEOUT}s, stopping browser`);
         // TODO:
         // Produce a tap line to report this test failure to CLI output/reporters.
         summary.ok = false;
         stopBrowser('QTap: browser_idle_timeout');
       } else {
-        clientIdleTimer = setTimeout(qtapClientTimeout, CLIENT_IDLE_INTERVAL);
+        clientIdleTimer = setTimeout(qtapCheckTimeout, TIMEOUT_CHECK_INTERVAL_MS);
       }
-    }, CLIENT_IDLE_INTERVAL);
+    }, TIMEOUT_CHECK_INTERVAL_MS);
 
     const [readeableForParser, readableForFinished] = readable.tee();
     readeableForParser.pipeTo(stream.Writable.toWeb(tapParser));

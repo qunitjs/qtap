@@ -12,6 +12,7 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
     .flat()
     .map(param => typeof param === 'string' ? param : util.inspect(param, { colors: false }))
     .join(' ');
+
   function channel (prefix) {
     return {
       channel,
@@ -30,12 +31,17 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
 }
 
 /**
- * @param {string[]} browsers One or more local browser names,
- *  or path starting with "./" to a JSON file.
- * @param {string} files Files and/or URLs.
+ * @param {string[]} browserNames One or more browser names, referring either
+ *  to a built-in browser launcher from QTap, or to a key in the optional
+ *  `config.browsers` object.
+ * @param {string[]} files Files and/or URLs.
  * @param {Object} [options]
- * @param {string} [options.config] Path to JS file that exports additional browsers.
- *  User controls how and what modules to import there. Inspired by ESLint FlatConfig.
+ * @param {string} [options.config] Path to JS file that defines additional browsers.
+ * @param {Object<string,Function>} [options.config.browsers] Refer to API.md for
+ *  how to define a browser launch function.
+ * @param {number} [options.timeout=3] Fail if a browser is idle for this many seconds.
+ * @param {number} [options.connectTimeout=60] How long a browser may initially take
+   to launch and open the URL, in seconds.
  * @param {boolean} [options.verbose=false]
  * @param {Function} [options.printInfo=console.log]
  * @param {Function} [options.printError=console.error]
@@ -52,7 +58,10 @@ async function run (browserNames, files, options) {
 
   const servers = [];
   for (const file of files) {
-    servers.push(new ControlServer(options.root, file, logger));
+    servers.push(new ControlServer(options.root, file, logger, {
+      idleTimeout: options.timeout,
+      connectTimeout: options.connectTimeout
+    }));
   }
 
   let config;
