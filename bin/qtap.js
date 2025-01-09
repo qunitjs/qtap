@@ -29,11 +29,11 @@ program
   .option('--timeout <number>',
     'Fail if a browser is quiet for more than this many seconds.',
     function (val) {
-      val = Number(val);
-      if (val < 0 || !Number.isFinite(val)) {
+      const num = Number(val);
+      if (num < 0 || !Number.isFinite(num)) {
         throw new InvalidArgumentError('Not a number.');
       }
-      return val;
+      return num;
     },
     3
   )
@@ -49,7 +49,7 @@ const opts = program.opts();
 if (opts.version) {
   const packageFile = new URL('../package.json', import.meta.url);
   const fs = await import('node:fs');
-  const version = JSON.parse(fs.readFileSync(packageFile)).version;
+  const version = JSON.parse(fs.readFileSync(packageFile).toString()).version;
   console.log(version);
 } else if (!program.args.length) {
   program.help();

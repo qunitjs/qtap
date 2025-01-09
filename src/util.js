@@ -48,7 +48,7 @@ const tempDirs = [];
 
 export const LocalBrowser = {
   /**
-   * @param {string|Array<string|null>|Iterator<string|null>} paths
+   * @param {string|Array<string|null>|Generator<string|null|undefined>} paths
    *  Path to an executable command or an iterable list of candidate paths to
    *  check and use the first one that exists.
    *
@@ -64,7 +64,7 @@ export const LocalBrowser = {
    * @param {Array<string>} args List of string arguments, passed to child_process.spawn()
    *  which will automatically quote and escape these.
    * @param {AbortSignal} signal
-   * @return {Promise}
+   * @return {Promise<void>}
    */
   async spawn (paths, args, signal, logger) {
     if (typeof paths === 'string') {

@@ -7,7 +7,24 @@ import browsers from './browsers.js';
 import { ControlServer } from './server.js';
 import { globalController, globalSignal } from './util.js';
 
+/**
+ * @typedef {Object} Logger
+ * @property {Function} channel
+ * @property {Function} debug
+ * @property {Function} warning
+ */
+
+/**
+ * @param {string} defaultChannel
+ * @param {Function} printError
+ * @param {?Function} [printDebug]
+ * @return {Logger}
+ */
 function makeLogger (defaultChannel, printError, printDebug = null) {
+  /**
+   * @param {Array<any>} params
+   * @returns {string}
+   */
   const paramsFmt = (params) => params
     .flat()
     .map(param => typeof param === 'string' ? param : util.inspect(param, { colors: false }))
@@ -31,25 +48,28 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
 }
 
 /**
+ * @typedef {Object} qtap.RunOptions
+ * @property {string} [config] Path to JS file that defines additional browsers.
+ * @property {Object<string,Function>} [options.config.browsers] Refer to API.md for
+ *  how to define a browser launch function.
+ * @property {number} [timeout=3] Fail if a browser is idle for this many seconds.
+ * @property {number} [connectTimeout=60] How long a browser may initially take
+   to launch and open the URL, in seconds.
+ * @property {boolean} [verbose=false]
+ * @property {Function} [printInfo=console.log]
+ * @property {Function} [printError=console.error]
+ * @property {string} [root=process.cwd()] Root directory to find files in
+ *  and serve up. Ignored if testing from URLs.
+
+/**
  * @param {string[]} browserNames One or more browser names, referring either
  *  to a built-in browser launcher from QTap, or to a key in the optional
  *  `config.browsers` object.
  * @param {string[]} files Files and/or URLs.
- * @param {Object} [options]
- * @param {string} [options.config] Path to JS file that defines additional browsers.
- * @param {Object<string,Function>} [options.config.browsers] Refer to API.md for
- *  how to define a browser launch function.
- * @param {number} [options.timeout=3] Fail if a browser is idle for this many seconds.
- * @param {number} [options.connectTimeout=60] How long a browser may initially take
-   to launch and open the URL, in seconds.
- * @param {boolean} [options.verbose=false]
- * @param {Function} [options.printInfo=console.log]
- * @param {Function} [options.printError=console.error]
- * @param {string} [options.root=process.cwd()] Root directory to find files in
- *  and serve up. Ignored if testing from URLs.
- * @return {number} Exit code. 0 is success, 1 is failed.
+ * @param {qtap.RunOptions} [options]
+ * @return {Promise<number>} Exit code. 0 is success, 1 is failed.
  */
-async function run (browserNames, files, options) {
+async function run (browserNames, files, options = {}) {
   const logger = makeLogger(
     'qtap_main',
     options.printError || console.error,
@@ -146,6 +166,7 @@ async function run (browserNames, files, options) {
 
   // TODO: Return exit status, to ease programmatic use and testing.
   // TODO: Add parameter for stdout used by reporters.
+  return 0;
 }
 
 export default {

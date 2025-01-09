@@ -1,11 +1,13 @@
 import which from 'which';
 import { globalSignal, LocalBrowser } from './util.js';
+/** @import { Logger } from './qtap.js' */
 
 async function findAvailablePort () {
   const net = await import('node:net');
-  return new Promise((resolve, reject) => {
+  return new Promise((resolve, _reject) => {
     const srv = net.createServer();
     srv.listen(0, () => {
+      // @ts-ignore - Not null after listen()
       const port = srv.address().port;
       srv.close(() => resolve(port));
     });
@@ -41,7 +43,8 @@ let sharedSafariDriverPort = null;
  *
  * @param {string} url
  * @param {AbortSignal} signal
- * @param {qtap-Logger} logger
+ * @param {Logger} logger
+ * @returns {Promise<void>}
  */
 async function safari (url, signal, logger) {
   // Step 1: Start safaridriver
@@ -68,6 +71,7 @@ async function safari (url, signal, logger) {
       method: method,
       body: JSON.stringify(body)
     });
+    /** @type {any} */
     const data = await resp.json();
     if (!resp.ok) {
       throw `HTTP ${resp.status} ${data?.value?.error}, ${data?.value?.message || ''}`;
@@ -82,8 +86,10 @@ async function safari (url, signal, logger) {
       session = await webdriverReq('POST', '/session/', { capabilities: { browserName: 'safari' } });
       // Connected!
       break;
-    } catch (e) {
-      if (e && (e.code === 'ECONNREFUSED' || (e.cause && e.cause.code === 'ECONNREFUSED'))) {
+    } catch (err) {
+      /** @type {any} - TypeScript can't set type without reassign, and @types/node lacks Error.code */
+      const e = err;
+      if (e.code === 'ECONNREFUSED' || (e.cause && e.cause.code === 'ECONNREFUSED')) {
         // Wait for safaridriver to be ready, try again in another 10ms-200ms, upto ~2s in total.
         logger.debug('safaridriver_waiting', `Attempt #${i}: ${e.code || e.cause.code}. Try again in ${i * 10}ms.`);
         await new Promise(resolve => setTimeout(resolve, i * 10));
@@ -103,7 +109,7 @@ async function safari (url, signal, logger) {
   }
 
   // Step 4: Close the tab once we receive an 'abort' signal.
-  await new Promise((resolve, reject) => {
+  return await new Promise((resolve, reject) => {
     signal.addEventListener('abort', async () => {
       try {
         await webdriverReq('DELETE', `/session/${session.sessionId}`);

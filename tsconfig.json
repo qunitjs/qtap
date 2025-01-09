@@ -1,0 +1,16 @@
+{
+  "include": [
+    "bin/*.js",
+    "src/*.js"
+  ],
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "lib": [ "es2020" ],
+    "module": "nodenext",
+    "noEmit": true,
+    "strict": true,
+
+    "noImplicitAny": false
+  }
+}
