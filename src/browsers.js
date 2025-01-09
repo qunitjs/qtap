@@ -105,10 +105,6 @@ function * getEdgePaths () {
   }
 }
 
-// http://kb.mozillazine.org/About:config_entries
-// https://github.com/sitespeedio/browsertime/blob/v23.5.0/lib/firefox/settings/firefoxPreferences.js
-// https://github.com/airtap/the-last-browser-launcher/blob/v0.1.1/lib/launch/index.js
-// https://github.com/karma-runner/karma-firefox-launcher/blob/v2.1.3/index.js
 async function firefox (url, signal, logger) {
   const profileDir = LocalBrowser.makeTempDir();
   const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
@@ -116,6 +112,10 @@ async function firefox (url, signal, logger) {
     args.push('-headless');
   }
 
+  // http://kb.mozillazine.org/About:config_entries
+  // https://github.com/sitespeedio/browsertime/blob/v23.5.0/lib/firefox/settings/firefoxPreferences.js
+  // https://github.com/airtap/the-last-browser-launcher/blob/v0.1.1/lib/launch/index.js
+  // https://github.com/karma-runner/karma-firefox-launcher/blob/v2.1.3/index.js
   logger.debug('firefox_prefs_create', 'Creating temporary prefs.js file');
   fs.writeFileSync(path.join(profileDir, 'prefs.js'), createFirefoxPrefsJs({
     'app.update.disabledForTesting': true, // Disable auto-updates
@@ -145,8 +145,8 @@ async function firefox (url, signal, logger) {
   await LocalBrowser.spawn(getFirefoxPaths(), args, signal, logger);
 }
 
-// https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
 async function chromium (paths, url, signal, logger) {
+  // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
   const dataDir = LocalBrowser.makeTempDir();
   const args = [
     '--user-data-dir=' + dataDir,

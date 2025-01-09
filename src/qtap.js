@@ -12,6 +12,7 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
     .flat()
     .map(param => typeof param === 'string' ? param : util.inspect(param, { colors: false }))
     .join(' ');
+
   function channel (prefix) {
     return {
       channel,
