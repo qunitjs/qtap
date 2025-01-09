@@ -295,6 +295,12 @@ The clientId is only unique to a single qtap process and thus should not be used
 
 * When creating a temporary directory for the Firefox browser profile, we call our `LocalBrowser.mkTempDir` utility which uses [Node.js `fs.mkdtemp`](https://nodejs.org/docs/latest-v22.x/api/fs.html#fsmkdtempprefix-options-callback), which creates a new directory with a random name that didn't already exist. This is favoured over `os.tmpdir()` with a prefix like `"qtap" + clientId`, as that would conflict with with concurrent invocations, and any remnants of past invokations.
 
+## QTap API: Config file
+
+Inspired by ESLint FlatConfig.
+
+User controls how and what modules to import there. Avoid hard-to-debug YAML or JSON.
+
 ## QTap Internal: Client send
 
 _See also: `function qtapClientHead` in [/src/server.js](./src/server.js)_.

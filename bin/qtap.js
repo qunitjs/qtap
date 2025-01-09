@@ -12,7 +12,7 @@ program
   .description('Run unit tests in real browsers', {
     file: 'One or more local HTML files or URLs'
   })
-  .argument('<file...>')
+  .argument('[file...]')
   .option('-b, --browser <name>',
     'One or more browser names.\n'
        + 'Available: firefox, chrome, safari.',
@@ -27,8 +27,7 @@ program
   )
   .option('-c, --config <file>', 'Optional config file to define additional browsers.')
   .option('--timeout <number>',
-    'Fail if a browser is quiet for this long '
-      + 'before or between results,\nin millseconds.',
+    'Fail if a browser is quiet for more than this many seconds.',
     function (val) {
       val = Number(val);
       if (val < 0 || !Number.isFinite(val)) {
@@ -36,7 +35,7 @@ program
       }
       return val;
     },
-    3000
+    3
   )
   .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
   .option('-v, --verbose', 'Enable verbose debug logging.')
