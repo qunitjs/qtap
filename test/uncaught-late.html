@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<title>uncaught-late</title>
+<script>
+console.log('TAP version 13');
+function delay(ms, fn) {
+  setTimeout(fn, ms);
+}
+console.log('ok 1 Foo bar');
+</script>
+<script>
+delay(100, function () {
+  console.log('ok 2 Baz > this thing');
+  console.log('ok 3 Baz > another thing');
+  console.log('ok 4 Quux');
+  console.log('1..4');
+});
+</script>
+<script>
+delay(100, function () {
+  bar(); // Uncaught ReferenceError
+});
+</script>

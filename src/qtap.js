@@ -16,11 +16,11 @@ import { globalController, globalSignal } from './util.js';
 
 /**
  * @param {string} defaultChannel
- * @param {Function} printError
- * @param {?Function} [printDebug]
+ * @param {Function} printDebug
+ * @param {boolean} [verbose]
  * @return {Logger}
  */
-function makeLogger (defaultChannel, printError, printDebug = null) {
+function makeLogger (defaultChannel, printDebug, verbose = false) {
   /**
    * @param {Array<any>} params
    * @returns {string}
@@ -33,13 +33,13 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
   function channel (prefix) {
     return {
       channel,
-      debug: !printDebug
+      debug: !verbose
         ? function () {}
         : function debug (messageCode, ...params) {
           printDebug(kleur.grey(`[${prefix}] ${kleur.bold(messageCode)} ${paramsFmt(params)}`));
         },
       warning: function warning (messageCode, ...params) {
-        printError(kleur.yellow(`[${prefix}] WARNING ${kleur.bold(messageCode)}`) + ` ${paramsFmt(params)}`);
+        printDebug(kleur.yellow(`[${prefix}] WARNING ${kleur.bold(messageCode)}`) + ` ${paramsFmt(params)}`);
       }
     };
   }
@@ -48,32 +48,40 @@ function makeLogger (defaultChannel, printError, printDebug = null) {
 }
 
 /**
+ * @typedef {Object} qtap.Config
+ * @property {Object<string,Function>} [browsers]
+ * Refer to API.md for how to define additional browsers.
+ */
+
+/**
  * @typedef {Object} qtap.RunOptions
- * @property {string} [config] Path to JS file that defines additional browsers.
- * @property {Object<string,Function>} [options.config.browsers] Refer to API.md for
- *  how to define a browser launch function.
+ * @property {qtap.Config|string} [config] Config object, or path to a qtap.config.js file.
+ * Refer to API.md for how to define additional browsers.
  * @property {number} [timeout=3] Fail if a browser is idle for this many seconds.
  * @property {number} [connectTimeout=60] How long a browser may initially take
    to launch and open the URL, in seconds.
  * @property {boolean} [verbose=false]
- * @property {Function} [printInfo=console.log]
- * @property {Function} [printError=console.error]
  * @property {string} [root=process.cwd()] Root directory to find files in
  *  and serve up. Ignored if testing from URLs.
+ * @property {Function} [printDebug=console.error]
+ */
 
 /**
- * @param {string[]} browserNames One or more browser names, referring either
+ * @param {string|string[]} browserNames One or more browser names, referring either
  *  to a built-in browser launcher from QTap, or to a key in the optional
  *  `config.browsers` object.
- * @param {string[]} files Files and/or URLs.
+ * @param {string|string[]} files Files and/or URLs.
  * @param {qtap.RunOptions} [options]
  * @return {Promise<number>} Exit code. 0 is success, 1 is failed.
  */
 async function run (browserNames, files, options = {}) {
+  if (typeof browserNames === 'string') browserNames = [browserNames];
+  if (typeof files === 'string') files = [files];
+
   const logger = makeLogger(
     'qtap_main',
-    options.printError || console.error,
-    options.verbose ? console.error : null
+    options.printDebug || console.error,
+    options.verbose
   );
 
   const servers = [];
@@ -90,7 +98,7 @@ async function run (browserNames, files, options = {}) {
       return;
     }
     if (!config) {
-      config = await import(options.config);
+      config = typeof options.config === 'string' ? await import(options.config) : options.config;
     }
     return config?.browsers?.[name];
   }

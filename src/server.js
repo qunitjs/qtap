@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
-import stream from 'node:stream';
 
 import { qtapClientHead, qtapClientBody } from './client.js';
 import { MIME_TYPES, humanSeconds } from './util.js';
 import tapFinished from './tap-finished.js';
+/** @import { Logger } from './qtap.js' */
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 
@@ -17,9 +17,9 @@ class ControlServer {
   static nextClientId = 1;
 
   /**
-   * @param {any} root
-   * @param {any} testFile
-   * @param {any} logger
+   * @param {string|undefined} root
+   * @param {string} testFile File path or URL
+   * @param {Logger} logger
    * @param {Object} options
    * @param {number|undefined} options.idleTimeout
    * @param {number|undefined} options.connectTimeout
@@ -119,20 +119,6 @@ class ControlServer {
     const IDLE_TIMEOUT = this.idleTimeout;
     const TIMEOUT_CHECK_INTERVAL_MS = 1000;
 
-    let readableController;
-    const readable = new ReadableStream({
-      start (readableControllerParam) {
-        readableController = readableControllerParam;
-      }
-    });
-
-    const browser = {
-      logger,
-      readableController,
-      clientIdleActive: performance.now(),
-    };
-    this.browsers.set(clientId, browser);
-
     // NOTE: The below does not need to check browsers.get() before
     // calling browsers.delete() or controller.abort() , because both of
     // these are safely idempotent and ignore all but the first call
@@ -172,8 +158,8 @@ class ControlServer {
     // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
     // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
 
-    // Optimization: The naive approach would be to clearTimeout+setTimeout on every tap line, in
-    // readableController or `tapParser.on('line')`. That would add significant overhead from
+    // Optimization: The naive approach would be to clearTimeout+setTimeout on every tap line,
+    // in `handleTap()` or `tapParser.on('line')`. But that adds significant overhead from
     // Node.js/V8 natively allocating many timers when processing large batches of test results.
     // Instead, merely store performance.now() and check that periodically.
     clientIdleTimer = setTimeout(function qtapCheckTimeout () {
@@ -188,9 +174,12 @@ class ControlServer {
       }
     }, TIMEOUT_CHECK_INTERVAL_MS);
 
-    // @ts-ignore - tap-parser does implement a Node.js-compatible writable stream,
-    // but TypeScript is stumbling on some unrelated properties from a newer Node.js.
-    readable.pipeTo(stream.Writable.toWeb(tapParser));
+    const browser = {
+      logger,
+      tapParser,
+      clientIdleActive: performance.now(),
+    };
+    this.browsers.set(clientId, browser);
 
     let signal = controller.signal;
     if (QTAP_DEBUG) {
@@ -314,7 +303,7 @@ class ControlServer {
       const browser = this.browsers.get(clientId);
       if (browser) {
         const now = performance.now();
-        browser.readableController.enqueue(body);
+        browser.tapParser.write(body);
         browser.logger.debug('browser_tap_received',
           `+${humanSeconds(now - browser.clientIdleActive)}s`,
           JSON.stringify(body.slice(0, 30) + '…')
