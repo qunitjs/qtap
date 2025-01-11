@@ -13,7 +13,7 @@
   "bin": {
     "qunit": "bin/qtap.js"
   },
-  "main": "index.js",
+  "main": "src/qtap.js",
   "engines": {
     "node": ">=20"
   },
@@ -23,7 +23,7 @@
     "lint": "eslint --cache .",
     "lint-fix": "eslint --cache --fix .",
     "types": "tsc",
-    "test": "npm run -s unit && npm run -s integration-basic && npm run -s lint && npm run -s types"
+    "test": "npm run -s integration-basic && npm run -s unit && npm run lint && npm run types"
   },
   "dependencies": {
     "commander": "12.1.0",
