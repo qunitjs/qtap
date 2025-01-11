@@ -112,11 +112,11 @@ function * getEdgePaths () {
 
 /**
  * @param {string} url
- * @param {AbortSignal} signal
+ * @param {Object<string,AbortSignal>} signals
  * @param {Logger} logger
  */
-async function firefox (url, signal, logger) {
-  const profileDir = LocalBrowser.makeTempDir();
+async function firefox (url, signals, logger) {
+  const profileDir = LocalBrowser.makeTempDir(signals, logger);
   const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
   if (!QTAP_DEBUG) {
     args.push('-headless');
@@ -152,18 +152,18 @@ async function firefox (url, signal, logger) {
     'startup.homepage_welcome_url': '', // Blank start, disable extra tab
     'startup.homepage_welcome_url.additional': '', // Blank start, disable extra tab
   }));
-  await LocalBrowser.spawn(getFirefoxPaths(), args, signal, logger);
+  await LocalBrowser.spawn(getFirefoxPaths(), args, signals, logger);
 }
 
 /**
  * @param {Generator<string>} paths
  * @param {string} url
- * @param {AbortSignal} signal
+ * @param {Object<string,AbortSignal>} signals
  * @param {Logger} logger
  */
-async function chromium (paths, url, signal, logger) {
+async function chromium (paths, url, signals, logger) {
   // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
-  const dataDir = LocalBrowser.makeTempDir();
+  const dataDir = LocalBrowser.makeTempDir(signals, logger);
   const args = [
     '--user-data-dir=' + dataDir,
     '--no-default-browser-check',
@@ -182,7 +182,7 @@ async function chromium (paths, url, signal, logger) {
     ),
     url
   ];
-  await LocalBrowser.spawn(paths, args, signal, logger);
+  await LocalBrowser.spawn(paths, args, signals, logger);
 }
 
 export default {

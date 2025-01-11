@@ -1,5 +1,5 @@
 import which from 'which';
-import { globalSignal, LocalBrowser } from './util.js';
+import { LocalBrowser } from './util.js';
 /** @import { Logger } from './qtap.js' */
 
 async function findAvailablePort () {
@@ -14,7 +14,7 @@ async function findAvailablePort () {
   });
 }
 
-async function launchSafariDriver (safaridriverBin, logger) {
+async function launchSafariDriver (safaridriverBin, globalSignal, logger) {
   const port = await findAvailablePort();
   LocalBrowser.spawn(safaridriverBin, ['-p', port], globalSignal, logger);
   return port;
@@ -42,18 +42,18 @@ let sharedSafariDriverPort = null;
  * https://developer.apple.com/documentation/webkit/testing-with-webdriver-in-safari
  *
  * @param {string} url
- * @param {AbortSignal} signal
+ * @param {Object<string,AbortSignal>} signals
  * @param {Logger} logger
  * @returns {Promise<void>}
  */
-async function safari (url, signal, logger) {
+async function safari (url, signals, logger) {
   // Step 1: Start safaridriver
   if (!sharedSafariDriverPort) {
     const safaridriverBin = process.env.SAFARIDRIVER_BIN || which.sync('safaridriver', { nothrow: true });
     if (process.platform !== 'darwin' || !safaridriverBin) {
       throw new Error('Safari requires macOS and safaridriver');
     }
-    sharedSafariDriverPort = launchSafariDriver(safaridriverBin, logger);
+    sharedSafariDriverPort = launchSafariDriver(safaridriverBin, signals.global, logger);
   } else {
     // This is not an optimization. Safari can only be claimed by one safaridriver.
     logger.debug('safaridriver_reuse', 'Use existing safaridriver process');
@@ -110,7 +110,7 @@ async function safari (url, signal, logger) {
 
   // Step 4: Close the tab once we receive an 'abort' signal.
   return await new Promise((resolve, reject) => {
-    signal.addEventListener('abort', async () => {
+    signals.client.addEventListener('abort', async () => {
       try {
         await webdriverReq('DELETE', `/session/${session.sessionId}`);
         resolve();

@@ -27,7 +27,8 @@ program
   )
   .option('-c, --config <file>', 'Optional config file to define additional browsers.')
   .option('--timeout <number>',
-    'Fail if a browser is quiet for more than this many seconds.',
+    'The maximum timeout of any single test.\n'
+      + 'The test is stopped if it takes longer than this between results.',
     function (val) {
       const num = Number(val);
       if (num < 0 || !Number.isFinite(num)) {
@@ -35,7 +36,18 @@ program
       }
       return num;
     },
-    3
+    30
+  )
+  .option('--connect-timeout <number>',
+    'How many seconds a browser may take to start up.',
+    function (val) {
+      const num = Number(val);
+      if (num < 0 || !Number.isFinite(num)) {
+        throw new InvalidArgumentError('Not a number.');
+      }
+      return num;
+    },
+    60
   )
   .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
   .option('-v, --verbose', 'Enable verbose debug logging.')
@@ -65,6 +77,7 @@ if (opts.version) {
     const exitCode = await qtap.run(opts.browser, program.args, {
       config: opts.config,
       timeout: opts.timeout,
+      connectTimeout: opts.connectTimeout,
       verbose: opts.verbose
     });
     process.exit(exitCode);

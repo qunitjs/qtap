@@ -11,7 +11,7 @@
   },
   "type": "module",
   "bin": {
-    "qunit": "bin/qtap.js"
+    "qtap": "bin/qtap.js"
   },
   "main": "src/qtap.js",
   "engines": {
