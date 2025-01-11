@@ -25,9 +25,6 @@ export const MIME_TYPES = {
   woff: 'font/woff',
 };
 
-export const globalController = new AbortController();
-export const globalSignal = globalController.signal;
-
 /**
  * @param {number} msDuration
  * @returns {string} Something like "0.7", "2", or "3.1"
@@ -43,8 +40,6 @@ export function * concatGenFn (...fns) {
     yield * fn();
   }
 }
-
-const tempDirs = [];
 
 export const LocalBrowser = {
   /**
@@ -63,10 +58,10 @@ export const LocalBrowser = {
    *
    * @param {Array<string>} args List of string arguments, passed to child_process.spawn()
    *  which will automatically quote and escape these.
-   * @param {AbortSignal} signal
+   * @param {Object<string,AbortSignal>} signals
    * @return {Promise<void>}
    */
-  async spawn (paths, args, signal, logger) {
+  async spawn (paths, args, signals, logger) {
     if (typeof paths === 'string') {
       paths = [paths];
     }
@@ -91,7 +86,7 @@ export const LocalBrowser = {
     }
 
     logger.debug('browser_exe_spawn', exe, args);
-    const spawned = cp.spawn(exe, args, { signal });
+    const spawned = cp.spawn(exe, args, { signal: signals.client });
 
     let stdout = '';
     let stderr = '';
@@ -104,7 +99,7 @@ export const LocalBrowser = {
 
     return new Promise((resolve, reject) => {
       spawned.on('error', error => {
-        if (signal.aborted) {
+        if (signals.client.aborted) {
           resolve();
         } else {
           logger.debug('browser_exe_error', error);
@@ -118,7 +113,7 @@ export const LocalBrowser = {
           + (sig ? `\n  signal: ${sig}` : '')
           + (stderr ? `\n  stderr:\n${indent(stderr)}` : '')
           + (stdout ? `\n  stdout:\n${indent(stdout)}` : '');
-        if (!signal.aborted) {
+        if (!signals.client.aborted) {
           reject(new Error(details));
         } else {
           logger.debug('browser_natural_exit', `Process exitted with code ${code} and signal ${sig}`);
@@ -136,31 +131,32 @@ export const LocalBrowser = {
    *
    * The newly created directory is automatically cleaned up at the end of the process.
    *
+   * @param {Object<string,AbortSignal>} signals
    * @returns {string}
    */
-  makeTempDir () {
+  makeTempDir (signals, logger) {
     // Use mkdtemp (instead of only tmpdir) to avoid clash with past or concurrent qtap procesess.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_'));
-    tempDirs.push(dir);
-    return dir;
-  },
 
-  rmTempDirs (logger) {
-    // On Windows, after spawn() returns for a stopped firefox.exe, we sometimes can't delete
-    // a temporary file because it is somehow still in use (EBUSY). Perhaps a race condition,
-    // or an lagged background process?
-    // > BUSY: resource busy or locked,
-    // > unlink 'C:\Users\RUNNER~1\AppData\Local\Temp\qtap_EZ4IoO\bounce-tracking-protection.sqlite'
-    //
-    // Workaround: Enable `maxRetries` in case we just need to wait a little bit, and beyond that
-    // use a try-catch to ignore a failed retry, because it is not critical for test completion.
-    for (const dir of tempDirs) {
+    logger.debug('tempdir_created', dir);
+
+    signals.global.addEventListener('abort', () => {
+      // On Windows, after spawn() returns for a stopped firefox.exe, we sometimes can't delete
+      // a temporary file because it is somehow still in use (EBUSY). Perhaps a race condition,
+      // or an lagged background process?
+      // > BUSY: resource busy or locked,
+      // > unlink 'C:\Users\RUNNER~1\AppData\Local\Temp\qtap_EZ4IoO\bounce-tracking-protection.sqlite'
+      //
+      // Workaround:
+      // - Enable `maxRetries` in case we just need to wait a little bit
+      // - use try-catch to ignore further errors, because it is not critical for test completion.
       try {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
       } catch (e) {
-        logger.warning('browser_rmtempdir_fail', e);
+        logger.warning('tempdir_rm_error', e);
       }
-    }
-    tempDirs.length = 0;
+    });
+
+    return dir;
   }
 };

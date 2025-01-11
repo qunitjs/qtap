@@ -38,7 +38,7 @@ class ControlServer {
 
     this.root = root;
     this.testFile = testFile;
-    this.idleTimeout = options.idleTimeout || 3;
+    this.idleTimeout = options.idleTimeout || 30;
     this.connectTimeout = options.connectTimeout || 60;
     this.browsers = new Map();
     this.logger = logger.channel('qtap_server_' + ControlServer.nextServerId++);
@@ -99,13 +99,13 @@ class ControlServer {
 
   /** @return {Promise<string>} HTML */
   async fetchTestFile (file) {
-    // As of Node.js 21, fetch() does not yet support file URLs.
+    // fetch() does not yet support file URLs (as of Node.js 21).
     return this.isURL(file)
       ? (await (await fetch(file)).text())
       : (await fsPromises.readFile(file)).toString();
   }
 
-  async launchBrowser (browserFn, browserName) {
+  async launchBrowser (browserFn, browserName, globalSignal) {
     const clientId = 'client_' + ControlServer.nextClientId++;
     const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
     const logger = this.logger.channel(`qtap_browser_${clientId}_${browserName}`);
@@ -113,11 +113,12 @@ class ControlServer {
     const controller = new AbortController();
     const summary = { ok: true };
 
+    // TODO: Write test for --connect-timeout by using a no-op browser.
+    const TIMEOUT_CONNECT = this.connectTimeout;
+    const TIMEOUT_IDLE = this.idleTimeout;
+    const TIMEOUT_CHECK_MS = 1000;
+    const launchStart = performance.now();
     let clientIdleTimer = null;
-    // TODO: Actually implement CONNECT_TIMEOUT
-    // const CONNECT_TIMEOUT = this.connectTimeout;
-    const IDLE_TIMEOUT = this.idleTimeout;
-    const TIMEOUT_CHECK_INTERVAL_MS = 1000;
 
     // NOTE: The below does not need to check browsers.get() before
     // calling browsers.delete() or controller.abort() , because both of
@@ -163,21 +164,29 @@ class ControlServer {
     // Node.js/V8 natively allocating many timers when processing large batches of test results.
     // Instead, merely store performance.now() and check that periodically.
     clientIdleTimer = setTimeout(function qtapCheckTimeout () {
-      if ((performance.now() - browser.clientIdleActive) > (IDLE_TIMEOUT * 1000)) {
-        logger.warning('browser_idle_timeout', `Browser timed out after ${IDLE_TIMEOUT}s, stopping browser`);
-        // TODO:
-        // Produce a tap line to report this test failure to CLI output/reporters.
-        summary.ok = false;
-        stopBrowser('QTap: browser_idle_timeout');
+      // TODO: Report timeout failure to reporter/TAP/CLI.
+      if (!browser.clientIdleActive) {
+        if ((performance.now() - launchStart) > (TIMEOUT_CONNECT * 1000)) {
+          logger.warning('browser_connect_timeout', `Browser did not start within ${TIMEOUT_CONNECT}s, stopping browser`);
+          summary.ok = false;
+          stopBrowser('QTap: browser_connect_timeout');
+          return;
+        }
       } else {
-        clientIdleTimer = setTimeout(qtapCheckTimeout, TIMEOUT_CHECK_INTERVAL_MS);
+        if ((performance.now() - browser.clientIdleActive) > (TIMEOUT_IDLE * 1000)) {
+          logger.warning('browser_idle_timeout', `Browser idle for ${TIMEOUT_IDLE}s, stopping browser`);
+          summary.ok = false;
+          stopBrowser('QTap: browser_idle_timeout');
+          return;
+        }
       }
-    }, TIMEOUT_CHECK_INTERVAL_MS);
+      clientIdleTimer = setTimeout(qtapCheckTimeout, TIMEOUT_CHECK_MS);
+    }, TIMEOUT_CHECK_MS);
 
     const browser = {
       logger,
       tapParser,
-      clientIdleActive: performance.now(),
+      clientIdleActive: null,
     };
     this.browsers.set(clientId, browser);
 
@@ -190,9 +199,11 @@ class ControlServer {
       });
     }
 
+    const signals = { client: signal, global: globalSignal };
+
     try {
       logger.debug('browser_launch_call');
-      await browserFn(url, signal, logger);
+      await browserFn(url, signals, logger);
       logger.debug('browser_launch_ended');
     } catch (err) {
       // TODO: Report browser_launch_exit to TAP. Eg. "No executable found"
@@ -264,6 +275,7 @@ class ControlServer {
     if (url.pathname === '/' && clientId !== null) {
       const browser = this.browsers.get(clientId);
       if (browser) {
+        browser.clientIdleActive = performance.now();
         browser.logger.debug('browser_connected', 'Browser connected! Serving test file.');
       } else {
         this.logger.debug('respond_static_testfile', clientId);
