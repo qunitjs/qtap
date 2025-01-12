@@ -5,8 +5,8 @@ import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 
-import { qtapClientHead, qtapClientBody } from './client.js';
-import { MIME_TYPES, humanSeconds } from './util.js';
+import { fnToStr, qtapClientHead, qtapClientBody } from './client.js';
+import * as util from './util.js';
 import tapFinished from './tap-finished.js';
 /** @import { Logger } from './qtap.js' */
 
@@ -187,6 +187,9 @@ class ControlServer {
       logger,
       tapParser,
       clientIdleActive: null,
+      getDisplayName () {
+        return (browserFn.displayName || 'UnnamedBrowser').slice(0, 50);
+      }
     };
     this.browsers.set(clientId, browser);
 
@@ -215,16 +218,7 @@ class ControlServer {
 
   async getTestFile (clientId) {
     const proxyBase = await this.getProxyBase();
-    function fnToStr (fn) {
-      return fn
-        .toString()
-        .replace(/\/\/.+$/gm, '')
-        .replace(/\n|^\s+/gm, ' ')
-        .replace(
-          "'{{QTAP_URL}}'",
-          JSON.stringify(proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId)
-        );
-    }
+    const qtapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
 
     const base = this.isURL(this.testFile)
       ? this.testFile
@@ -242,21 +236,21 @@ class ControlServer {
     // * Insert no line breaks, to avoid changing line numbers.
     // * Ignore <heading> and <head-thing>.
     // * Support <head x=y>, including with tab or newline.
-    html = this.replaceOnce(html, [
+    html = util.replaceOnce(html, [
       /<head(?:\s[^>]*)?>/i,
       /<html(?:\s[^>]*)?/i,
       /<!doctype[^>]*>/i,
       /^/
     ],
-    (m) => m + `<base href="${this.escapeHTML(base)}"/><script>(${fnToStr(qtapClientHead)})();</script>`
+    (m) => m + `<base href="${util.escapeHTML(base)}"/><script>(${fnToStr(qtapClientHead, qtapUrl)})();</script>`
     );
 
-    html = this.replaceOnce(html, [
+    html = util.replaceOnce(html, [
       /<\/body>(?![\s\S]*<\/body>)/i,
       /<\/html>(?![\s\S]*<\/html>)/i,
       /$/
     ],
-    (m) => '<script>(' + fnToStr(qtapClientBody) + ')();</script>' + m
+    (m) => '<script>(' + fnToStr(qtapClientBody, qtapUrl) + ')();</script>' + m
     );
 
     return html;
@@ -276,11 +270,11 @@ class ControlServer {
       const browser = this.browsers.get(clientId);
       if (browser) {
         browser.clientIdleActive = performance.now();
-        browser.logger.debug('browser_connected', 'Browser connected! Serving test file.');
+        browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
       } else {
         this.logger.debug('respond_static_testfile', clientId);
       }
-      resp.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || MIME_TYPES.html });
+      resp.writeHead(200, { 'Content-Type': util.MIME_TYPES[ext] || util.MIME_TYPES.html });
       resp.write(await this.getTestFile(clientId));
       resp.end();
       return;
@@ -292,7 +286,7 @@ class ControlServer {
     }
 
     this.logger.debug('respond_static_pipe', filePath);
-    resp.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || MIME_TYPES.bin });
+    resp.writeHead(200, { 'Content-Type': util.MIME_TYPES[ext] || util.MIME_TYPES.bin });
     fs.createReadStream(filePath)
       .on('error', (err) => {
         this.logger.warning('respond_static_pipe_error', err);
@@ -307,17 +301,16 @@ class ControlServer {
       body += data;
     });
     req.on('end', () => {
-      // Support QUnit 2.x: Strip escape sequences for tap-parser and tap-finished.
+      // Support QUnit 2.x: Strip escape sequences for tap-parser compatibility.
       // Fixed in QUnit 3.0 with https://github.com/qunitjs/qunit/pull/1801.
-      // eslint-disable-next-line no-control-regex
-      body = body.replace(/\x1b\[[0-9]+m/g, '');
+      body = util.stripAsciEscapes(body);
       const clientId = url.searchParams.get('qtap_clientId');
       const browser = this.browsers.get(clientId);
       if (browser) {
         const now = performance.now();
         browser.tapParser.write(body);
         browser.logger.debug('browser_tap_received',
-          `+${humanSeconds(now - browser.clientIdleActive)}s`,
+          `+${util.humanSeconds(now - browser.clientIdleActive)}s`,
           JSON.stringify(body.slice(0, 30) + '…')
         );
 
@@ -397,7 +390,7 @@ class ControlServer {
    */
   serveError (resp, statusCode, e) {
     if (!resp.headersSent) {
-      resp.writeHead(statusCode, { 'Content-Type': MIME_TYPES.txt });
+      resp.writeHead(statusCode, { 'Content-Type': util.MIME_TYPES.txt });
       // @ts-ignore - Definition lacks Error.stack
       resp.write((e.stack || String(e)) + '\n');
     }
@@ -410,32 +403,6 @@ class ControlServer {
 
   isURL (file) {
     return file.startsWith('http:') || file.startsWith('https:');
-  }
-
-  escapeHTML (text) {
-    return text.replace(/['"<>&]/g, (s) => {
-      switch (s) {
-        case '\'':
-          return '&#039;';
-        case '"':
-          return '&quot;';
-        case '<':
-          return '&lt;';
-        case '>':
-          return '&gt;';
-        case '&':
-          return '&amp;';
-      }
-    });
-  }
-
-  replaceOnce (input, patterns, replacement) {
-    for (const pattern of patterns) {
-      if (pattern.test(input)) {
-        return input.replace(pattern, replacement);
-      }
-    }
-    return input;
   }
 }
 

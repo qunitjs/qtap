@@ -1,6 +1,17 @@
 /* eslint-disable no-undef, no-var -- Browser code */
 // @ts-nocheck
 
+export function fnToStr (fn, qtapUrl) {
+  return fn
+    .toString()
+    .replace(/\/\/.+$/gm, '')
+    .replace(/\n|^\s+/gm, ' ')
+    .replace(
+      "'{{QTAP_URL}}'",
+      JSON.stringify(qtapUrl)
+    );
+}
+
 export function qtapClientHead () {
   // Support QUnit 3.0+: Enable TAP reporter, declaratively.
   window.qunit_config_reporters_tap = true;
