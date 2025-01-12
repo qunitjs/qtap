@@ -11,6 +11,7 @@
     "noEmit": true,
     "strict": true,
 
-    "noImplicitAny": false
+    "noImplicitAny": false,
+    "strictBindCallApply": false
   }
 }

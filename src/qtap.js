@@ -47,8 +47,16 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
 }
 
 /**
+ * @typedef {((
+ *  url: string,
+ *  signals: Object<string,AbortSignal>,
+ *  logger: Logger
+ * ) => Promise<void>) & { displayName?: string }} Browser
+ */
+
+/**
  * @typedef {Object} qtap.Config
- * @property {Object<string,Function>} [browsers]
+ * @property {Object<string,Browser>} [browsers]
  * Refer to API.md for how to define additional browsers.
  */
 

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<title>timeout-fail</title>
+<script>
+console.log('TAP version 13');
+function delay(ms, fn) {
+  setTimeout(fn, ms);
+}
+delay(100, () => {
+  console.log('ok 1 Foo bar');
+
+  delay(100, () => {
+    console.log("not ok 2 \u001b[31mBaz > hello fail\u001b[39m");
+    console.log("  ---\n  message: \"y\"\n  severity: failed\n  actual  : {\n  \"foo\": \"50\",\n  \"quux\": \"62\"\n}\n  expected: {\n  \"foo\": \"50\",\n  \"quux\": \"70\"\n}\n  stack: |\n    @https://demo.localhost:4000/test/fail.html:21:12\n  ...");
+
+    delay(100, () => {
+      console.log('ok 3 Baz > another thing');
+    });
+  });
+});
+</script>

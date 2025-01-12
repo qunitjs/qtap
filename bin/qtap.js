@@ -4,7 +4,7 @@
 import { program, InvalidArgumentError } from 'commander';
 import qtap from '../src/qtap.js';
 
-const optionBrowserDefault = ['firefox'];
+const optionBrowserDefault = ['detect'];
 
 program
   .name('qtap')
@@ -15,7 +15,7 @@ program
   .argument('[file...]')
   .option('-b, --browser <name>',
     'One or more browser names.\n'
-       + 'Available: firefox, chrome, safari.',
+       + 'Available: firefox, chrome, chromium, edge, safari.',
     (val, list) => {
       if (list === optionBrowserDefault) {
         // https://github.com/tj/commander.js/issues/1641

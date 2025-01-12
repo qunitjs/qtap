@@ -35,11 +35,46 @@ export function humanSeconds (msDuration) {
     .replace(/\.(0+)?$/, '');
 }
 
-export function * concatGenFn (...fns) {
-  for (const fn of fns) {
-    yield * fn();
-  }
+export function concatGenFn (...fns) {
+  return function * () {
+    for (const fn of fns) {
+      yield * fn();
+    }
+  };
 }
+
+export function stripAsciEscapes (text) {
+  // eslint-disable-next-line no-control-regex
+  return text.replace(/\x1b\[[0-9]+m/g, '');
+}
+
+export function escapeHTML (text) {
+  return text.replace(/['"<>&]/g, (s) => {
+    switch (s) {
+      case '\'':
+        return '&#039;';
+      case '"':
+        return '&quot;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '&':
+        return '&amp;';
+    }
+  });
+}
+
+export function replaceOnce (input, patterns, replacement) {
+  for (const pattern of patterns) {
+    if (pattern.test(input)) {
+      return input.replace(pattern, replacement);
+    }
+  }
+  return input;
+}
+
+export class CommandNotFoundError extends Error {}
 
 export const LocalBrowser = {
   /**
@@ -82,7 +117,7 @@ export const LocalBrowser = {
       }
     }
     if (!exe) {
-      throw new Error('No executable found');
+      throw new CommandNotFoundError('No executable found');
     }
 
     logger.debug('browser_exe_spawn', exe, args);
@@ -152,6 +187,7 @@ export const LocalBrowser = {
       // - use try-catch to ignore further errors, because it is not critical for test completion.
       try {
         fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+        logger.debug('tempdir_removed', dir);
       } catch (e) {
         logger.warning('tempdir_rm_error', e);
       }

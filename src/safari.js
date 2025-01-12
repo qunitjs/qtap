@@ -1,5 +1,5 @@
 import which from 'which';
-import { LocalBrowser } from './util.js';
+import { LocalBrowser, CommandNotFoundError } from './util.js';
 /** @import { Logger } from './qtap.js' */
 
 async function findAvailablePort () {
@@ -51,7 +51,7 @@ async function safari (url, signals, logger) {
   if (!sharedSafariDriverPort) {
     const safaridriverBin = process.env.SAFARIDRIVER_BIN || which.sync('safaridriver', { nothrow: true });
     if (process.platform !== 'darwin' || !safaridriverBin) {
-      throw new Error('Safari requires macOS and safaridriver');
+      throw new CommandNotFoundError('Safari requires macOS and safaridriver');
     }
     sharedSafariDriverPort = launchSafariDriver(safaridriverBin, signals.global, logger);
   } else {
@@ -121,5 +121,6 @@ async function safari (url, signals, logger) {
     });
   });
 }
+safari.displayName = 'Safari';
 
 export default safari;

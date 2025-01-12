@@ -5,8 +5,8 @@ import path from 'node:path';
 
 import which from 'which';
 import safari from './safari.js';
-import { concatGenFn, LocalBrowser } from './util.js';
-/** @import { Logger } from './qtap.js' */
+import { concatGenFn, CommandNotFoundError, LocalBrowser } from './util.js';
+/** @import { Logger, Browser } from './qtap.js' */
 
 const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 
@@ -154,14 +154,15 @@ async function firefox (url, signals, logger) {
   }));
   await LocalBrowser.spawn(getFirefoxPaths(), args, signals, logger);
 }
+firefox.displayName = 'Firefox';
 
 /**
- * @param {Generator<string>} paths
+ * @param {Function} getPaths
  * @param {string} url
  * @param {Object<string,AbortSignal>} signals
  * @param {Logger} logger
  */
-async function chromium (paths, url, signals, logger) {
+async function chromiumGeneric (getPaths, url, signals, logger) {
   // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
   const dataDir = LocalBrowser.makeTempDir(signals, logger);
   const args = [
@@ -182,31 +183,51 @@ async function chromium (paths, url, signals, logger) {
     ),
     url
   ];
-  await LocalBrowser.spawn(paths, args, signals, logger);
+  await LocalBrowser.spawn(getPaths(), args, signals, logger);
 }
+
+const chrome = chromiumGeneric.bind(null, getChromePaths);
+chrome.displayName = 'Chrome';
+
+const chromium = chromiumGeneric.bind(null, getChromiumPaths);
+chromium.displayName = 'Chromium';
+
+const edge = chromiumGeneric.bind(null, getEdgePaths);
+edge.displayName = 'Edge';
+
+const chromiumAny = chromiumGeneric.bind(null, concatGenFn(getChromiumPaths, getChromePaths, getEdgePaths));
+chromiumAny.displayName = 'Chromium';
+
+/** @type {Browser} - https://github.com/microsoft/TypeScript/issues/22063 */
+const detect = async function (url, signals, logger) {
+  for (const fn of [firefox, chrome, chromium, edge, safari]) {
+    detect.displayName = fn.displayName || fn.name;
+    logger.debug('detect_try', detect.displayName);
+    try {
+      await fn(url, signals, logger);
+      return;
+    } catch (e) {
+      if (e instanceof CommandNotFoundError) {
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new CommandNotFoundError('No local browser found');
+};
 
 export default {
   LocalBrowser,
 
+  detect,
   firefox,
-  chrome: chromium.bind(null, concatGenFn(getChromePaths, getChromiumPaths, getEdgePaths)),
-  chromium: chromium.bind(null, concatGenFn(getChromiumPaths, getChromePaths, getEdgePaths)),
-  edge: chromium.bind(null, concatGenFn(getEdgePaths)),
+  chrome,
+  chromium: chromiumAny,
+  edge,
   safari,
 
   // TODO: browserstack
-  // - browserstack/firefox_45
-  // - browserstack/firefox_previous
-  // - browserstack/firefox_current,
-  // - ["browserstack", {
-  //      "browser": "opera",
-  //      "browser_version": "36.0",
-  //      "device": null,
-  //      "os": "OS X",
-  //      "os_version": "Sierra"
-  //   ]
   // TODO: saucelabs
-  // TODO: puppeteer
   // TODO: puppeteer_coverage { outputDir: instanbul }
-  // TODO: integration test with nyc as example with console+html output
+  // TODO: integration test with puppeteer_coverage and nyc console+html output
 };
