@@ -98,24 +98,16 @@ async function run (browserNames, files, options = {}) {
     }));
   }
 
-  let config;
-  async function getNonDefaultBrowser (name, options) {
-    if (!options.config) {
-      return;
-    }
-    if (!config) {
-      config = typeof options.config === 'string' ? await import(options.config) : options.config;
-    }
-    return config?.browsers?.[name];
-  }
-
+  // TODO: Add integration test for config file not found
+  // TODO: Add integration test for config file with runtime errors
+  const config = typeof options.config === 'string' ? await import(options.config) : options.config;
   const globalController = new AbortController();
   const globalSignal = globalController.signal;
 
   const browserLaunches = [];
   for (const browserName of browserNames) {
     logger.debug('get_browser', browserName);
-    const browserFn = browsers[browserName] || await getNonDefaultBrowser(browserName, options);
+    const browserFn = browsers[browserName] || config?.browsers?.[browserName];
     if (typeof browserFn !== 'function') {
       throw new Error('Unknown browser ' + browserName);
     }

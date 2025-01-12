@@ -1,6 +1,6 @@
 {
   "name": "qtap",
-  "description": "Run unit tests in real browsers with TAP.",
+  "description": "Run unit tests in real browsers, real fast.",
   "version": "0.0.1",
   "homepage": "https://qunitjs.com",
   "license": "MIT",
@@ -14,9 +14,6 @@
     "qtap": "bin/qtap.js"
   },
   "main": "src/qtap.js",
-  "engines": {
-    "node": ">=20"
-  },
   "scripts": {
     "unit": "qunit",
     "integration-basic": "node bin/qtap.js -v test/pass.html",
@@ -40,5 +37,29 @@
     "qunit": "2.23.1",
     "semistandard": "~17.0.0",
     "typescript": "5.7.3"
-  }
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "keywords": [
+    "unit",
+    "testing",
+    "browser",
+    "headless",
+    "saucelabs",
+    "browserstack",
+    "tap",
+    "tape",
+    "qunit",
+    "mocha",
+    "jasmine",
+    "jest",
+    "airtap",
+    "karma",
+    "webdriver",
+    "local",
+    "firefox",
+    "chrome",
+    "safari"
+  ]
 }
