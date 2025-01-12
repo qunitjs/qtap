@@ -120,8 +120,8 @@ export const LocalBrowser = {
       throw new CommandNotFoundError('No executable found');
     }
 
-    logger.debug('browser_exe_spawn', exe, args);
-    const spawned = cp.spawn(exe, args, { signal: signals.client });
+    logger.debug('browser_spawn_command', exe, args);
+    const spawned = cp.spawn(exe, args, { signal: signals.browser });
 
     let stdout = '';
     let stderr = '';
@@ -134,25 +134,20 @@ export const LocalBrowser = {
 
     return new Promise((resolve, reject) => {
       spawned.on('error', error => {
-        if (signals.client.aborted) {
-          resolve();
-        } else {
-          logger.debug('browser_exe_error', error);
-          reject(error);
-        }
+        reject(error);
       });
       spawned.on('exit', (code, sig) => {
         const indent = (str) => str.trim().split('\n').map(line => '    ' + line).join('\n');
-        const details = 'Process exited'
-          + `\n  exit code: ${code}`
-          + (sig ? `\n  signal: ${sig}` : '')
-          + (stderr ? `\n  stderr:\n${indent(stderr)}` : '')
-          + (stdout ? `\n  stdout:\n${indent(stdout)}` : '');
-        if (!signals.client.aborted) {
-          reject(new Error(details));
-        } else {
-          logger.debug('browser_natural_exit', `Process exitted with code ${code} and signal ${sig}`);
+        if (!code) {
+          logger.debug('browser_spawn_exit', `Process exited with code ${code}`);
           resolve();
+        } else {
+          const details = `Process exited with code ${code}`
+            + (sig ? `\n  signal: ${sig}` : '')
+            + (stderr ? `\n  stderr:\n${indent(stderr)}` : '')
+            + (stdout ? `\n  stdout:\n${indent(stdout)}` : '');
+          logger.debug('browser_spawn_exit', details);
+          reject(new Error(details));
         }
       });
     });

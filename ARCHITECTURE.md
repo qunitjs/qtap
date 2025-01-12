@@ -47,13 +47,13 @@ Examples:
 
 Performance is a first-class principle in QTap.
 
-The first priority (after the "Simple" and "Lean" values above) is time to first result. This means the CLI endpoint should as directly as possible launch browsers and start the ControlServer. Any computation, imports and other overhead is deferred when possible.
+The first priority (after the "Simple" and "Lean" values above) is time to first result. This means the CLI endpoint should as directly as possible start browsers and start the ControlServer. Any computation, imports and other overhead is deferred when possible.
 
 The second piority is time to last result (e.g. "Done!"), which is generally what a human in local development (especially in watch mode) will be waiting for. Note that this is separate from when the CLI process technically exits, which is less important to us. It is expected that the process will in practice exit immediately after the last result is printed, but when we have a choice, it is important to first get and communicate test results. In particular for watch mode, shutdown logic will not happen on re-runs and thus is avoided if we don't do it in the critical path toward obtaining test results.
 
 ## Debugging
 
-Set `QTAP_DEBUG=1` as environment variable, when calling the QTap CLI, to launch local browsers visibly instead of headless.
+Set `QTAP_DEBUG=1` as environment variable, when calling the QTap CLI, to start local browsers visibly instead of headless.
 
 Set `--verbose` in the QTap CLI to enable verbose debug logging.
 
@@ -122,11 +122,11 @@ Set `--verbose` in the QTap CLI to enable verbose debug logging.
 
 * **Page-side script injection**. The HTML file is modified to include an inline script that subscribes to `console.log` and other events, and beacons to our command-line process. More details at [QTap Internal: Client send](#qtap-internal-client-send).
 
-  This means browser can be launched by any means, pointed at a URL, and then forgotten about until we shut it down. It requires no control over the browser process. And the requirements for someone writing a browser launcher, is thus merely to open a single URL. More details at [QTap API: Browser launcher](#qtap-internal-client-send).
+  This means browser can be started by any means, pointed at a URL, and then forgotten about until we shut it down. It requires no control over the browser process. And the requirements for someone writing a browser launcher, is thus merely to open a single URL. More details at [QTap API: Browser launcher](#qtap-internal-client-send).
 
 ## QTap API: Browser launcher
 
-Each browser is implemented as a single async function that launches the browser. The function is called with all required information and services. The [injected](https://en.wikipedia.org/wiki/Dependency_injection) parameters include a URL, an abort signal, and a logger function.
+Each browser is implemented as a single async function that opens the browser. The function is called with all required information and services. The [injected](https://en.wikipedia.org/wiki/Dependency_injection) parameters include a URL, an abort signal, and a logger function.
 
 The function is expected to run as long as the browser is running, with the returned Promise representing the browser process. If the browser exits for any reason, you may run any cleanup and then return. If the browser fails or crashes for any reason, this can be conveyed by throwing an error (or rejecting a Promise) from your async function.
 
@@ -147,7 +147,7 @@ async function myBrowser (url, signal, logger) {
   const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
   await new Promise((resolve, reject) => {
     spawned.on('error', (error) => reject(error));
-    spawned.on('exit', (code) => reject(new Error(`Process exited ${code}`)));
+    spawned.on('exit', () => reject(new Error('Process exited'));
   });
 }
 
@@ -240,12 +240,8 @@ async function myBrowser (url, signal, logger) {
   async function myBrowser (url, signal, logger) {
     const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
     await new Promise((resolve, reject) => {
-      spawned.on('error', (error) => {
-        (signal.aborted ? resolve() : reject(error));
-      });
-      spawned.on('exit', () => {
-        (signal.aborted ? resolve(): reject(new Error('Process exited'));
-      });
+      spawned.on('error', (error) => reject(error));
+      spawned.on('exit', () => reject(new Error('Process exited'));
     });
   }
   ```
@@ -398,6 +394,22 @@ Safari has long resisted the temptation to offer a reasonable command-line inter
 * `safaridriver -p <port>` ⭐️ _Chosen approach_
 
   Start driver, and then make HTTP requests to create a session, navigate the session, and to delete the session.
+
+  ```
+  $ curl -d '{"capabilities":{"browserName": "safari"}}' -i localhost:4444/session/
+  HTTP/1.1 200 OK
+  …
+  {"value":{"sessionId":"EXAMPLE-001",…}
+
+  $ curl -d '{"url":"https://example.org/browserName"}' -i localhost:4444/session/EXAMPLE-001/url
+  HTTP/1.1 200 OK
+  …
+  {"value":null}
+  $ curl -X DELETE -i localhost:4444/session/EXAMPLE-001
+  HTTP/1.1 200 OK
+  …
+  {"value":null}
+  ```
 
   This addresses all previous concerns, and seems to be the best as of 2025. The only downside is that it requires a bit more code to setup (find available port, and perform various HTTP requests).
 
