@@ -80,19 +80,24 @@ async function safari (url, signals, logger) {
   }
 
   // Step 2: Create a session
+  // This re-tries indefinitely until safaridriver is ready, or until we get an abort signal.
   let session;
-  for (let i = 1; i <= 20; i++) {
+  for (let i = 1; true; i++) {
     try {
       session = await webdriverReq('POST', '/session/', { capabilities: { browserName: 'safari' } });
       // Connected!
       break;
     } catch (err) {
-      /** @type {any} - TypeScript can't set type without reassign, and @types/node lacks Error.code */
+      /** @type {any} - TypeScript @types/node lacks Error.code */
       const e = err;
       if (e.code === 'ECONNREFUSED' || (e.cause && e.cause.code === 'ECONNREFUSED')) {
-        // Wait for safaridriver to be ready, try again in another 10ms-200ms, upto ~2s in total.
-        logger.debug('safaridriver_waiting', `Attempt #${i}: ${e.code || e.cause.code}. Try again in ${i * 10}ms.`);
-        await new Promise(resolve => setTimeout(resolve, i * 10));
+        // Give up once QTap declared browser_connect_timeout
+        if (signals.browser.aborted) return;
+
+        // Back off from 50ms upto 1.0s each attempt
+        const wait = Math.min(i * 50, 1000);
+        logger.debug('safaridriver_waiting', `Attempt #${i}: ${e.code || e.cause.code}. Try again in ${wait}ms.`);
+        await new Promise(resolve => setTimeout(resolve, wait));
         continue;
       }
       logger.warning('safaridriver_session_error', e);
@@ -110,7 +115,7 @@ async function safari (url, signals, logger) {
 
   // Step 4: Close the tab once we receive an 'abort' signal.
   return await new Promise((resolve, reject) => {
-    signals.client.addEventListener('abort', async () => {
+    signals.browser.addEventListener('abort', async () => {
       try {
         await webdriverReq('DELETE', `/session/${session.sessionId}`);
         resolve();

@@ -43,8 +43,8 @@ class ControlServer {
     this.connectTimeout = options.connectTimeout || 60;
 
     this.browsers = new Map();
-    // Optimization: Prefetch test file in parallel with server starting and browser launching.
-    // Once browsers are launched and they make their first HTTP request,
+    // Optimization: Prefetch test file in parallel with server creation and browser launching.
+    // Once browsers are running and they make their first HTTP request,
     // we'll await this in handleRequest/getTestFile.
     this.testFilePromise = this.fetchTestFile(this.testFile);
 
@@ -111,6 +111,7 @@ class ControlServer {
 
     // TODO: Remove `summary` in favour of `eventbus`
     const summary = { ok: true };
+    let clientIdleTimer = null;
 
     const controller = new AbortController();
     let signal = controller.signal;
@@ -118,48 +119,37 @@ class ControlServer {
       // Replace with a dummy signal that we never invoke
       signal = (new AbortController()).signal;
       controller.signal.addEventListener('abort', () => {
-        logger.warning('browser_debugging_abort', 'Keeping browser open for debugging');
+        logger.warning('browser_signal_debugging', 'Keeping browser open for debugging');
       });
     }
-
-    // TODO: Write test for --connect-timeout by using a no-op browser.
-    const TIMEOUT_CONNECT = this.connectTimeout;
-    const TIMEOUT_IDLE = this.idleTimeout;
-    const TIMEOUT_CHECK_MS = 1000;
-    const launchStart = performance.now();
-    let clientIdleTimer = null;
 
     // Reasons to stop a browser, whichever comes first:
     // 1. tap-finished.
     // 2. tap-parser 'bailout' event (client knows it crashed).
     // 3. timeout (client didn't start, lost connection, or unknowingly crashed).
-    const stopBrowser = async (reason) => {
-      // NOTE: The below does not need to check browsers.get() before calling
-      // browsers.delete() or controller.abort(), because both of these are
-      // idempotent and safely ignore all but the first call.
-      // Hence we don't need to guard against race conditions where two reasons
-      // may both try to stop the same browser.
+    const stopBrowser = async (messageCode) => {
+      // Ignore any duplicate or late reasons to stop
+      if (!this.browsers.has(clientId)) return;
+
       clearTimeout(clientIdleTimer);
       this.browsers.delete(clientId);
-      controller.abort(reason);
+      controller.abort(`QTap: ${messageCode}`);
     };
 
     const tapParser = tapFinished({ wait: 0 }, () => {
-      logger.debug('browser_tap_finished', 'Test has finished, stopping browser');
-      stopBrowser('QTap: browser_tap_finished');
+      logger.debug('browser_tap_finished', 'Test run finished, stopping browser');
+      stopBrowser('browser_tap_finished');
     });
 
     tapParser.on('bailout', (reason) => {
-      logger.warning('browser_tap_bailout', `Test ended unexpectedly, stopping browser. Reason: ${reason}`);
+      logger.warning('browser_tap_bailout', `Test run bailed, stopping browser. Reason: ${reason}`);
       summary.ok = false;
-      stopBrowser('QTap: browser_tap_bailout');
-    });
-    tapParser.once('fail', () => {
-      logger.debug('browser_tap_fail', 'Results indicate at least one test has failed assertions');
-      summary.ok = false;
+      stopBrowser('browser_tap_bailout');
     });
     // Debugging
+    // tapParser.on('line', logger.debug.bind(logger, 'browser_tap_line'));
     // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
+    // tapParser.once('fail', () => logger.debug('browser_tap_fail', 'Found one or more failing tests'));
     // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
 
     const browser = {
@@ -176,37 +166,50 @@ class ControlServer {
     // in `handleTap()` or `tapParser.on('line')`. But that adds significant overhead from
     // Node.js/V8 natively allocating many timers when processing large batches of test results.
     // Instead, merely store performance.now() and check that periodically.
-    clientIdleTimer = setTimeout(function qtapCheckTimeout () {
-      // TODO: Report timeout failure to reporter/TAP/CLI.
+    // TODO: Write test for --connect-timeout by using a no-op browser.
+    const TIMEOUT_CHECK_MS = 1000;
+    const browserStart = performance.now();
+    const qtapCheckTimeout = () => {
       if (!browser.clientIdleActive) {
-        if ((performance.now() - launchStart) > (TIMEOUT_CONNECT * 1000)) {
-          logger.warning('browser_connect_timeout', `Browser did not start within ${TIMEOUT_CONNECT}s, stopping browser`);
+        if ((performance.now() - browserStart) > (this.connectTimeout * 1000)) {
+          logger.warning('browser_connect_timeout', `Browser did not start within ${this.connectTimeout}s, stopping browser`);
           summary.ok = false;
-          stopBrowser('QTap: browser_connect_timeout');
+          stopBrowser('browser_connect_timeout');
           return;
         }
       } else {
-        if ((performance.now() - browser.clientIdleActive) > (TIMEOUT_IDLE * 1000)) {
-          logger.warning('browser_idle_timeout', `Browser idle for ${TIMEOUT_IDLE}s, stopping browser`);
+        if ((performance.now() - browser.clientIdleActive) > (this.idleTimeout * 1000)) {
+          logger.warning('browser_idle_timeout', `Browser idle for ${this.idleTimeout}s, stopping browser`);
           summary.ok = false;
-          stopBrowser('QTap: browser_idle_timeout');
+          stopBrowser('browser_idle_timeout');
           return;
         }
       }
       clientIdleTimer = setTimeout(qtapCheckTimeout, TIMEOUT_CHECK_MS);
-    }, TIMEOUT_CHECK_MS);
+    };
+    clientIdleTimer = setTimeout(qtapCheckTimeout, TIMEOUT_CHECK_MS);
 
     const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
-    const signals = { client: signal, global: globalSignal };
+    const signals = { browser: signal, global: globalSignal };
 
     try {
       logger.debug('browser_launch_call');
       await browserFn(url, signals, logger);
-      logger.debug('browser_launch_ended');
-    } finally {
+
+      // This stopBrowser() is most likely a no-op (e.g. if we received test results
+      // or some error, and we asked the browser to stop). Just in case the browser
+      // ended by itself, call it again here so that we can convey it as an error
+      // if it was still running from our POV.
+      logger.debug('browser_launch_exit');
+      stopBrowser('browser_launch_exit');
+    } catch (e) {
       // TODO: Report error to TAP. Eg. "No executable found"
       // TODO: logger.warning('browser_launch_exit', err); but catch in qtap.js?
-      stopBrowser('QTap: browser_launch_ended');
+      if (!signal.aborted) {
+        logger.warning('browser_launch_error', e);
+        stopBrowser('browser_launch_error');
+        throw e;
+      }
     }
   }
 
