@@ -36,7 +36,7 @@ program
       }
       return num;
     },
-    30
+    5
   )
   .option('--connect-timeout <number>',
     'How many seconds a browser may take to start up.',
@@ -49,8 +49,10 @@ program
     },
     60
   )
+  .option('-r, --reporter <reporter>', 'One of "minimal", "dynamic", or "none".', 'minimal')
   .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
-  .option('-v, --verbose', 'Enable verbose debug logging.')
+  .option('-d, --debug', 'Enable debug mode (non-headless browser, and verbose logging).')
+  .option('-v, --verbose', 'Enable verbose logging.')
   .option('-V, --version', 'Display version number.')
   .helpOption('-h, --help', 'Display this usage information.')
   .showHelpAfterError()
@@ -66,21 +68,16 @@ if (opts.version) {
 } else if (!program.args.length) {
   program.help();
 } else {
-  process.on('unhandledRejection', (reason) => {
-    console.error(reason);
-  });
-  process.on('uncaughtException', (error) => {
-    console.error(error);
-  });
-
   try {
-    const exitCode = await qtap.run(opts.browser, program.args, {
+    const result = await qtap.runWaitFor(opts.browser, program.args, {
       config: opts.config,
       timeout: opts.timeout,
       connectTimeout: opts.connectTimeout,
-      verbose: opts.verbose
+      reporter: opts.reporter,
+      debug: opts.debug || (process.env.QTAP_DEBUG === '1'),
+      verbose: opts.debug || opts.verbose,
     });
-    process.exit(exitCode);
+    process.exit(result.exitCode);
   } catch (e) {
     console.error(e);
     process.exit(1);

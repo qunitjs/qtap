@@ -1,61 +1,102 @@
-/* eslint-disable no-undef, no-var -- Browser code */
+/* eslint-disable no-var -- Browser code */
+/* global XMLHttpRequest, QUnit */
 // @ts-nocheck
 
-export function fnToStr (fn, qtapUrl) {
+export function fnToStr (fn, qtapTapUrl, qtapStderrUrl) {
   return fn
     .toString()
     .replace(/\/\/.+$/gm, '')
     .replace(/\n|^\s+/gm, ' ')
     .replace(
-      "'{{QTAP_URL}}'",
-      JSON.stringify(qtapUrl)
+      /'{{QTAP_TAP_URL}}'/g,
+      JSON.stringify(qtapTapUrl)
+    )
+    .replace(
+      /'{{QTAP_STDERR_URL}}'/g,
+      JSON.stringify(qtapStderrUrl)
     );
 }
 
+// See ARCHITECTURE.md#qtap-internal-client-send
 export function qtapClientHead () {
-  // Support QUnit 3.0+: Enable TAP reporter, declaratively.
+  // Support QUnit 2.24+: Enable TAP reporter, declaratively.
   window.qunit_config_reporters_tap = true;
 
-  // See ARCHITECTURE.md#qtap-internal-client-send
-  var qtapNativeLog = console.log;
-  var qtapBuffer = '';
-  var qtapShouldSend = true;
-  function qtapSend () {
-    var body = qtapBuffer;
-    qtapBuffer = '';
-    qtapShouldSend = false;
+  // Support IE 9: console.log.apply is undefined.
+  // Don't bother with Function.apply.call. Skip super call instead.
+  var console = window.console || (window.console = {});
+  var log = console.log && console.log.apply ? console.log : function () {};
+  var warn = console.warn && console.warn.apply ? console.warn : function () {};
+  var error = console.error && console.error.apply ? console.error : function () {};
 
-    var xhr = new XMLHttpRequest();
-    xhr.onload = xhr.onerror = () => {
-      qtapShouldSend = true;
-      if (qtapBuffer) {
-        qtapSend();
+  function createBufferedWrite (url) {
+    var buffer = '';
+    var isSending = false;
+    function send () {
+      isSending = true;
+
+      var body = buffer;
+      buffer = '';
+
+      var xhr = new XMLHttpRequest();
+      xhr.onload = xhr.onerror = () => {
+        isSending = false;
+        if (buffer) {
+          send();
+        }
+      };
+      xhr.open('POST', url, true);
+      xhr.send(body);
+    }
+    return function write (str) {
+      buffer += str + '\n';
+      if (!isSending) {
+        isSending = true;
+        setTimeout(send, 0);
       }
     };
-    xhr.open('POST', '{{QTAP_URL}}', true);
-    xhr.send(body);
   }
-  console.log = function qtapLog (str) {
+
+  var writeTap = createBufferedWrite('{{QTAP_TAP_URL}}');
+  var writeConsoleError = createBufferedWrite('{{QTAP_STDERR_URL}}');
+
+  console.log = function qtapConsoleLog (str) {
     if (typeof str === 'string') {
-      qtapBuffer += str + '\n';
-      if (qtapShouldSend) {
-        qtapShouldSend = false;
-        setTimeout(qtapSend, 0);
-      }
+      writeTap(str);
     }
-    return qtapNativeLog.apply(this, arguments);
+    return log.apply(console, arguments);
   };
 
-  // TODO: Forward console.warn, console.error, and onerror to server.
-  // TODO: Report window.onerror as TAP comment, visible by default.
-  // TODO: Report console.warn/console.error in --verbose mode.
-  window.addEventListener('error', function (error) {
-    console.log('Script error: ' + (error.message || 'Unknown error'));
+  console.warn = function qtapConsoleWarn (str) {
+    writeConsoleError(String(str));
+    return warn.apply(console, arguments);
+  };
+
+  console.error = function qtapConsoleError (str) {
+    writeConsoleError(String(str));
+    return error.apply(console, arguments);
+  };
+
+  function errorString (error) {
+    var str = String(error);
+    if (str.slice(0, 7) === '[object') {
+      // Based on https://es5.github.io/#x15.11.4.4
+      return (error.name || 'Error') + (error.message ? (': ' + error.message) : '');
+    }
+    return str;
+  }
+
+  window.addEventListener('error', function (event) {
+    var str = event.error ? errorString(event.error) : (event.message || 'Script error');
+    if (event.filename && event.lineno) {
+      str += '\n  at ' + event.filename + ':' + event.lineno;
+    }
+    writeConsoleError(str);
   });
 }
 
 export function qtapClientBody () {
-  // Support QUnit 2.16 - 2.22: Enable TAP reporter, procedurally.
+  // Support QUnit 2.16 - 2.23: Enable TAP reporter, procedurally.
   if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
     QUnit.reporters.tap.init(QUnit);
   }

@@ -5,10 +5,10 @@ console.log('TAP version 13');
 function delay(ms, fn) {
   setTimeout(fn, ms);
 }
-delay(1000, () => {
+delay(500, () => {
   console.log('ok 1 Foo bar');
 
-  delay(2100, () => {
+  delay(500, () => {
     console.log('ok 2 Baz > this thing');
 
     delay(3200, () => {

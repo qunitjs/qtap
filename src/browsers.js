@@ -8,8 +8,6 @@ import safari from './safari.js';
 import { concatGenFn, CommandNotFoundError, LocalBrowser } from './util.js';
 /** @import { Logger, Browser } from './qtap.js' */
 
-const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
-
 // - use Set to remove duplicate values, because `PROGRAMFILES` and `ProgramW6432` are often
 //   both "C:\Program Files", which, we'd check three times otherwise.
 // - it is important that this preserves order of precedence.
@@ -114,11 +112,13 @@ function * getEdgePaths () {
  * @param {string} url
  * @param {Object<string,AbortSignal>} signals
  * @param {Logger} logger
+ * @param {boolean} debugMode
  */
-async function firefox (url, signals, logger) {
+async function firefox (url, signals, logger, debugMode) {
   const profileDir = LocalBrowser.makeTempDir(signals, logger);
   const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
-  if (!QTAP_DEBUG) {
+  if (!debugMode) {
+    firefox.displayName = 'Headless Firefox';
     args.push('-headless');
   }
 
@@ -157,54 +157,52 @@ async function firefox (url, signals, logger) {
 firefox.displayName = 'Firefox';
 
 /**
- * @param {Function} getPaths
- * @param {string} url
- * @param {Object<string,AbortSignal>} signals
- * @param {Logger} logger
+ * @param {string} displayName
+ * @param {() => Generator} getPaths
+ * @return {Browser}
  */
-async function chromiumGeneric (getPaths, url, signals, logger) {
-  // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
-  const dataDir = LocalBrowser.makeTempDir(signals, logger);
-  const args = [
-    '--user-data-dir=' + dataDir,
-    '--no-default-browser-check',
-    '--no-first-run',
-    '--disable-default-apps',
-    '--disable-popup-blocking',
-    '--disable-translate',
-    '--disable-background-timer-throttling',
-    ...(QTAP_DEBUG ? [] : [
-      '--headless',
-      '--disable-gpu',
-      '--disable-dev-shm-usage'
-    ]),
-    ...(process.env.CHROMIUM_FLAGS ? process.env.CHROMIUM_FLAGS.split(/\s+/) : (
-      process.env.CI ? ['--no-sandbox'] : [])
-    ),
-    url
-  ];
-  await LocalBrowser.spawn(getPaths(), args, signals, logger);
+function makeChromium (displayName, getPaths) {
+  /** @type {Browser} - https://github.com/microsoft/TypeScript/issues/22063 */
+  const chromium = async function (url, signals, logger, debugMode) {
+    chromium.displayName = debugMode ? displayName : `Headless ${displayName}`;
+    // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
+    const dataDir = LocalBrowser.makeTempDir(signals, logger);
+    const args = [
+      '--user-data-dir=' + dataDir,
+      '--no-default-browser-check',
+      '--no-first-run',
+      '--disable-default-apps',
+      '--disable-popup-blocking',
+      '--disable-translate',
+      '--disable-background-timer-throttling',
+      ...(debugMode ? [] : [
+        '--headless',
+        '--disable-gpu',
+        '--disable-dev-shm-usage'
+      ]),
+      ...(process.env.CHROMIUM_FLAGS ? process.env.CHROMIUM_FLAGS.split(/\s+/) : (
+        process.env.CI ? ['--no-sandbox'] : [])
+      ),
+      url
+    ];
+    await LocalBrowser.spawn(getPaths(), args, signals, logger);
+  };
+  return chromium;
 }
 
-const chrome = chromiumGeneric.bind(null, getChromePaths);
-chrome.displayName = 'Chrome';
-
-const chromium = chromiumGeneric.bind(null, getChromiumPaths);
-chromium.displayName = 'Chromium';
-
-const edge = chromiumGeneric.bind(null, getEdgePaths);
-edge.displayName = 'Edge';
-
-const chromiumAny = chromiumGeneric.bind(null, concatGenFn(getChromiumPaths, getChromePaths, getEdgePaths));
-chromiumAny.displayName = 'Chromium';
+const chrome = makeChromium('Chrome', getChromePaths);
+const chromium = makeChromium('Chromium', getChromiumPaths);
+const edge = makeChromium('Edge', getEdgePaths);
+const chromiumAny = makeChromium('Chromium', concatGenFn(getChromiumPaths, getChromePaths, getEdgePaths));
 
 /** @type {Browser} - https://github.com/microsoft/TypeScript/issues/22063 */
-const detect = async function (url, signals, logger) {
+const detect = async function (url, signals, logger, debugMode) {
   for (const fn of [firefox, chrome, chromium, edge, safari]) {
-    detect.displayName = fn.displayName || fn.name;
-    logger.debug('detect_try', detect.displayName);
+    logger.debug('detect_try', fn.name);
     try {
-      await fn(url, signals, logger);
+      const browerPromise = fn(url, signals, logger, debugMode);
+      detect.displayName = fn.displayName || fn.name;
+      await browerPromise;
       return;
     } catch (e) {
       if (e instanceof CommandNotFoundError) {

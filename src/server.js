@@ -4,32 +4,34 @@ import fs from 'node:fs';
 import fsPromises from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 import { fnToStr, qtapClientHead, qtapClientBody } from './client.js';
 import * as util from './util.js';
 import tapFinished from './tap-finished.js';
+/** @import events from 'node:events' */
 /** @import { Logger } from './qtap.js' */
-
-const QTAP_DEBUG = process.env.QTAP_DEBUG === '1';
 
 class ControlServer {
   static nextServerId = 1;
   static nextClientId = 1;
 
   /**
-   * @param {string|undefined} cwd
+   * @param {string} cwd
    * @param {string} testFile File path or URL
+   * @param {events.EventEmitter} eventbus
    * @param {Logger} logger
    * @param {Object} options
-   * @param {number|undefined} options.idleTimeout
-   * @param {number|undefined} options.connectTimeout
+   * @param {number} options.idleTimeout
+   * @param {number} options.connectTimeout
+   * @param {boolean} options.debugMode
    */
-  constructor (cwd, testFile, logger, options) {
+  constructor (cwd, testFile, eventbus, logger, options) {
     this.logger = logger.channel('qtap_server_' + ControlServer.nextServerId++);
 
     // For `qtap <url>`, default root to cwd (unused).
     // For `qtap test/index.html`, default root to cwd.
-    let root = cwd || process.cwd();
+    let root = cwd;
     let testFileAbsolute;
     if (this.isURL(testFile)) {
       testFileAbsolute = testFile;
@@ -50,13 +52,27 @@ class ControlServer {
       if (!testFile || testFile.startsWith('..')) {
         throw new Error(`Cannot serve ${testFile} from ${root}`);
       }
+      // Normalize \backslash to POSIX slash, but only on Windows
+      // * To use as-is in URLs (launchBrowser/qtapUrlPath).
+      // * Stable values in reporter output text.
+      // * Stable values in event data.
+      // * Only on Windows (pathToFileURL chooses automatically),
+      //   because on POSIX, backslash is a valid character to use in
+      //   in a file name, which we must not replace with forward slash.
+      const rootUrlPathname = pathToFileURL(root).pathname;
+      const fileUrlPathname = pathToFileURL(testFileAbsolute).pathname;
+      testFile = fileUrlPathname
+        .replace(rootUrlPathname, '')
+        .replace(/^\/+/, '');
       this.logger.debug('server_testfile_normalized', testFile);
     }
 
     this.root = root;
     this.testFile = testFile;
-    this.idleTimeout = options.idleTimeout || 30;
-    this.connectTimeout = options.connectTimeout || 60;
+    this.eventbus = eventbus;
+    this.idleTimeout = options.idleTimeout;
+    this.connectTimeout = options.connectTimeout;
+    this.debugMode = options.debugMode;
 
     this.browsers = new Map();
     // Optimization: Prefetch test file in parallel with server creation and browser launching.
@@ -84,16 +100,19 @@ class ControlServer {
     server.on('request', async (req, resp) => {
       try {
         const url = new URL(this.proxyBase + req.url);
-        this.logger.debug('request_url', req.url);
         switch (url.pathname) {
           case '/.qtap/tap/':
             this.handleTap(req, url, resp);
+            break;
+          case '/.qtap/stderr/':
+            this.handleStderr(req, url, resp);
             break;
           default:
             await this.handleRequest(req, url, resp);
         }
       } catch (e) {
-        this.logger.warning('respond_uncaught', e);
+        this.logger.warning('respond_uncaught', req.url, String(e));
+        eventbus.emit('error', e);
         this.serveError(resp, 500, /** @type {Error} */ (e));
       }
     });
@@ -116,22 +135,23 @@ class ControlServer {
   /** @return {Promise<string>} HTML */
   async fetchTestFile (file) {
     // fetch() does not yet support file URLs (as of Node.js 21).
-    return this.isURL(file)
-      ? (await (await fetch(file)).text())
-      : (await fsPromises.readFile(file)).toString();
+    if (this.isURL(file)) {
+      this.logger.debug('testfile_fetch', `Requesting a copy of ${file}`);
+      return await (await fetch(file)).text();
+    } else {
+      this.logger.debug('testfile_read', `Reading file contents from ${file}`);
+      return (await fsPromises.readFile(file)).toString();
+    }
   }
 
   async launchBrowser (browserFn, browserName, globalSignal) {
     const clientId = 'client_' + ControlServer.nextClientId++;
     const logger = this.logger.channel(`qtap_browser_${clientId}_${browserName}`);
-
-    // TODO: Remove `summary` in favour of `eventbus`
-    const summary = { ok: true };
     let clientIdleTimer = null;
 
     const controller = new AbortController();
     let signal = controller.signal;
-    if (QTAP_DEBUG) {
+    if (this.debugMode) {
       // Replace with a dummy signal that we never invoke
       signal = (new AbortController()).signal;
       controller.signal.addEventListener('abort', () => {
@@ -139,28 +159,57 @@ class ControlServer {
       });
     }
 
-    // Reasons to stop a browser, whichever comes first:
-    // 1. tap-finished.
-    // 2. tap-parser 'bailout' event (client knows it crashed).
-    // 3. timeout (client didn't start, lost connection, or unknowingly crashed).
-    const stopBrowser = async (messageCode) => {
+    /**
+     * Reasons to stop a browser, whichever comes first:
+     * 1. tap-finished.
+     * 2. tap-parser 'bailout' event (client knows it crashed).
+     * 3. timeout (client didn't start, lost connection, or unknowingly crashed).
+     *
+     * @param {string} messageCode
+     * @param {string} [reason]
+     * @param {Object} [finalResult]
+     */
+    const stopBrowser = async (messageCode, reason = '', finalResult = null) => {
       // Ignore any duplicate or late reasons to stop
       if (!this.browsers.has(clientId)) return;
 
       clearTimeout(clientIdleTimer);
       this.browsers.delete(clientId);
       controller.abort(`QTap: ${messageCode}`);
+
+      if (finalResult) {
+        this.eventbus.emit('result', {
+          clientId,
+          ok: finalResult.ok,
+          total: finalResult.count,
+          // avoid `finalResult.todo` because it would double-count passing TODOs
+          passed: finalResult.pass + finalResult.todos.length,
+          // avoid `finalResult.fail` because it includes TODOs (expected failure)
+          failed: finalResult.failures.length,
+          skips: finalResult.skips,
+          todos: finalResult.todos,
+          failures: finalResult.failures,
+        });
+      } else {
+        this.eventbus.emit('bail', {
+          clientId,
+          reason,
+        });
+      }
     };
 
-    const tapParser = tapFinished({ wait: 0 }, () => {
-      logger.debug('browser_tap_finished', 'Test run finished, stopping browser');
-      stopBrowser('browser_tap_finished');
+    const tapParser = tapFinished({ wait: 0 }, (finalResult) => {
+      logger.debug('browser_tap_finished', 'Test run finished, stopping browser', {
+        ok: finalResult.ok,
+        total: finalResult.count,
+        failed: finalResult.failures.length,
+      });
+      stopBrowser('browser_tap_finished', '', finalResult);
     });
 
     tapParser.on('bailout', (reason) => {
       logger.warning('browser_tap_bailout', `Test run bailed, stopping browser. Reason: ${reason}`);
-      summary.ok = false;
-      stopBrowser('browser_tap_bailout');
+      stopBrowser('browser_tap_bailout', reason);
     });
     // Debugging
     // tapParser.on('line', logger.debug.bind(logger, 'browser_tap_line'));
@@ -183,21 +232,19 @@ class ControlServer {
     // Node.js/V8 natively allocating many timers when processing large batches of test results.
     // Instead, merely store performance.now() and check that periodically.
     // TODO: Write test for --connect-timeout by using a no-op browser.
-    const TIMEOUT_CHECK_MS = 1000;
+    const TIMEOUT_CHECK_MS = 100;
     const browserStart = performance.now();
     const qtapCheckTimeout = () => {
       if (!browser.clientIdleActive) {
         if ((performance.now() - browserStart) > (this.connectTimeout * 1000)) {
           logger.warning('browser_connect_timeout', `Browser did not start within ${this.connectTimeout}s, stopping browser`);
-          summary.ok = false;
-          stopBrowser('browser_connect_timeout');
+          stopBrowser('browser_connect_timeout', `Browser did not start within ${this.connectTimeout}s`);
           return;
         }
       } else {
         if ((performance.now() - browser.clientIdleActive) > (this.idleTimeout * 1000)) {
           logger.warning('browser_idle_timeout', `Browser idle for ${this.idleTimeout}s, stopping browser`);
-          summary.ok = false;
-          stopBrowser('browser_idle_timeout');
+          stopBrowser('browser_idle_timeout', `Browser idle for ${this.idleTimeout}s`);
           return;
         }
       }
@@ -228,13 +275,7 @@ class ControlServer {
       tmpUrl.searchParams.set('qtap_clientId', clientId);
       qtapUrlPath = tmpUrl.pathname + tmpUrl.search;
     } else {
-      qtapUrlPath = '/'
-        + (this.testFile
-          .replace(/^\/+/, '')
-          // TODO: Add test case to confirm Windows-file to POSIX-URL normalization.
-          .replace(/\\/g, '/')
-        )
-        + '?qtap_clientId=' + clientId;
+      qtapUrlPath = '/' + this.testFile + '?qtap_clientId=' + clientId;
     }
 
     const url = await this.getProxyBase() + qtapUrlPath;
@@ -242,20 +283,29 @@ class ControlServer {
 
     try {
       logger.debug('browser_launch_call');
-      await browserFn(url, signals, logger);
+
+      // Separate calling browserFn() from awaiting so that we can emit an event
+      // right after calling it (which may set Browser.displayName). If we awaited first,
+      // then the event would be emitted after the client is done instead of when it starts.
+      const browerPromise = browserFn(url, signals, logger, this.debugMode);
+      this.eventbus.emit('client', {
+        clientId,
+        testFile: this.testFile,
+        browserName,
+        displayName: browser.getDisplayName(),
+      });
+      await browerPromise;
 
       // This stopBrowser() is most likely a no-op (e.g. if we received test results
       // or some error, and we asked the browser to stop). Just in case the browser
       // ended by itself, call it again here so that we can convey it as an error
       // if it was still running from our POV.
       logger.debug('browser_launch_exit');
-      stopBrowser('browser_launch_exit');
+      stopBrowser('browser_launch_exit', 'Browser ended unexpectedly');
     } catch (e) {
-      // TODO: Report error to TAP. Eg. "No executable found"
-      // TODO: logger.warning('browser_launch_exit', err); but catch in qtap.js?
       if (!signal.aborted) {
         logger.warning('browser_launch_error', e);
-        stopBrowser('browser_launch_error');
+        stopBrowser('browser_launch_error', 'Browser ended unexpectedly');
         throw e;
       }
     }
@@ -263,11 +313,11 @@ class ControlServer {
 
   async getTestFile (clientId) {
     const proxyBase = await this.getProxyBase();
-    const qtapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
+    const qtapTapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
+    const qtapStderrUrl = proxyBase + '/.qtap/stderr/?qtap_clientId=' + clientId;
 
-    let headInjectHtml = `<script>(${fnToStr(qtapClientHead, qtapUrl)})();</script>`;
+    let headInjectHtml = `<script>(${fnToStr(qtapClientHead, qtapTapUrl, qtapStderrUrl)})();</script>`;
 
-    // Add <base> tag so that /test/index.html can refer to files relative to it,
     // and URL-based files can fetch their resources directly from the original server.
     // * Prepend as early as possible. If the file has its own <base>, theirs will
     //   come later and correctly "win" by applying last (after ours).
@@ -277,6 +327,7 @@ class ControlServer {
     }
 
     let html = await this.testFilePromise;
+    this.logger.debug('testfile_ready', `Finished fetching ${this.testFile}`);
 
     // Head injection
     // * Use a callback, to avoid accidental $1 substitutions via user input.
@@ -285,7 +336,7 @@ class ControlServer {
     // * Support <head x=y>, including with tab or newline.
     html = util.replaceOnce(html, [
       /<head(?:\s[^>]*)?>/i,
-      /<html(?:\s[^>]*)?/i,
+      /<html(?:\s[^>]*)?>/i,
       /<!doctype[^>]*>/i,
       /^/
     ],
@@ -297,7 +348,7 @@ class ControlServer {
       /<\/html>(?![\s\S]*<\/html>)/i,
       /$/
     ],
-    (m) => '<script>(' + fnToStr(qtapClientBody, qtapUrl) + ')();</script>' + m
+    (m) => '<script>(' + fnToStr(qtapClientBody, qtapTapUrl, qtapStderrUrl) + ')();</script>' + m
     );
 
     return html;
@@ -319,6 +370,7 @@ class ControlServer {
       if (browser) {
         browser.clientIdleActive = performance.now();
         browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
+        this.eventbus.emit('online', { clientId });
       } else {
         this.logger.debug('respond_static_testfile', clientId);
       }
@@ -352,83 +404,55 @@ class ControlServer {
       // Support QUnit 2.x: Strip escape sequences for tap-parser compatibility.
       // Fixed in QUnit 3.0 with https://github.com/qunitjs/qunit/pull/1801.
       body = util.stripAsciEscapes(body);
+      const bodyExcerpt = body.slice(0, 30) + '…';
       const clientId = url.searchParams.get('qtap_clientId');
       const browser = this.browsers.get(clientId);
       if (browser) {
         const now = performance.now();
         browser.logger.debug('browser_tap_received',
           `+${util.humanSeconds(now - browser.clientIdleActive)}s`,
-          body.slice(0, 30) + '…'
+          bodyExcerpt
         );
         browser.tapParser.write(body);
 
         browser.clientIdleActive = performance.now();
       } else {
-        this.logger.debug('browser_tap_unhandled', clientId, JSON.stringify(body.slice(0, 30) + '…'));
+        this.logger.debug('browser_tap_unhandled', clientId, bodyExcerpt);
       }
     });
     resp.writeHead(204);
     resp.end();
+  }
 
-    // TODO: Pipe to one of two options, based on --reporter:
-    // - [tap | default in piped and CI?]: tap-parser + some kind of renumbering or prefixing.
-    //   client_1> ok 40 foo > bar
-    //   out> ok 1 - qtap > Firefox (client_1) connected! Running test/index.html.
-    //   out> ok 42 - foo > bar
-    //   -->
-    //   client_1> ok 40 foo > bar
-    //   client_2> ok 40 foo > bar
-    //   out> ok 1 - qtap > Firefox (client_1) connected! Running test/index.html.
-    //   out> ok 2 - qtap > Chromium (client_2) connected! Running test/index.html.
-    //   out> ok 81 - foo > bar [Firefox client_1]
-    //   out> ok 82 - foo > bar [Chromium client_2]
-    // - [minimal|default in interactive mode]
-    //   out> Testing /test/index.html
-    //   out>
-    //   out> Firefox    : SPINNER [blue]
-    //   out>              Running test 40.
-    //   out> [Chromium] : [grey] [star] [grey] Launching...
-    //   out> [Safari]   : [grey] [star] [grey] Launching...
-    //   -->
-    //   out> Testing /test/index.html
-    //   out>
-    //   out> [Firefox client_1]: ✔ [green] Completed 123 tests in 42ms.
-    //   out> [Chromium client2]: [blue*spinner] Running test 40.
-    //   out> [Safari client_3] [grey] [star] [grey] Launching...
-    //   -->
-    //   out> Testing /test/index.html
-    //   out>
-    //   out> not ok 40 foo > bar # Chromium client_2
-    //   out> ---
-    //   out> message: failed
-    //   out> actual  : false
-    //   out> expected: true
-    //   out> stack: |
-    //   out>   @/example.js:46:12
-    //   out> ...
-    //   out>
-    //   out> [Firefox client_1]: ✔ [green] Completed 123 tests in 42ms.
-    //   out> [Chromium client_2]: ✘ [red] 2 failures.
-    //
-    //   If minimal is selected explicilty in piped/non-interactive/CI mode,
-    //   then it will have no spinners, and also lines won't overwrite each other.
-    //   Test counting will be disabled along with the spinner so instead we'll print:
-    //   out> Firefox client_1: Launching...
-    //   out> Firefox client_1: Running tests... [= instead of spinner/counter]
-    //   out> Firefox client_1: Completed 123 tets in 42ms.
-
-    // "▓", "▒", "░" // noise, 100
-    // "㊂", "㊀", "㊁" // toggle10, 100
-    // await new Promise(r=>setTimeout(r,100)); process.stdout.write('\r' + frames[i % frames.length] + '     ');
-    // writable.isTTY
-    // !process.env.CI
-
-    //   Default: TAP where each browser is 1 virtual test in case of success.
-    //   Verbose: TAP forwarded, test names prepended with [browsername].
-    //   Failures are shown either way, with prepended names.
-    // TODO: On "runEnd", report runtime
-    //   Default: No-op, as overall TAP line as single test (above) can contain runtime
-    //   Verbose: Output comment indicatinh browser done, and test runtime.
+  handleStderr (req, url, resp) {
+    let body = '';
+    req.on('data', (data) => {
+      body += data;
+    });
+    req.on('end', () => {
+      const clientId = url.searchParams.get('qtap_clientId');
+      const browser = this.browsers.get(clientId);
+      if (browser) {
+        browser.logger.warning('browser_stderr_received', clientId, body);
+        // Serve information as transparently as possible
+        // Strip the proxyBase and query params (e.g. qtap_clientId)
+        const message = body.trimEnd().replace(/^( {2}at )(http:\S+):(\S+)(?=\n|$)/gm, (m, at, frameUrlStr, lineno) => {
+          const frameUrl = new URL(frameUrlStr);
+          if (frameUrl.origin === this.proxyBase) {
+            return at + frameUrl.pathname + ':' + lineno;
+          }
+          return m;
+        });
+        this.eventbus.emit('consoleerror', {
+          clientId,
+          message
+        });
+      } else {
+        browser.logger.debug('browser_stderr_unhandled', clientId, body);
+      }
+    });
+    resp.writeHead(204);
+    resp.end();
   }
 
   /**

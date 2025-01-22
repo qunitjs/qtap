@@ -1,10 +1,11 @@
 'use strict';
 
+import { EventEmitter } from 'node:events';
 import util from 'node:util';
 import path from 'node:path';
 
-import kleur from 'kleur';
 import browsers from './browsers.js';
+import reporters from './reporters.js';
 import { ControlServer } from './server.js';
 
 /**
@@ -49,12 +50,12 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
       debug: !verbose
         ? function () {}
         : function debug (messageCode, ...params) {
-          printDebug(kleur.grey(`[${prefix}] ${kleur.bold(messageCode)} ${paramsFmt(params)}`));
+          printDebug(util.styleText('grey', `[${prefix}] ${util.styleText('bold', messageCode)} ${paramsFmt(params)}`));
         },
       warning: !verbose
         ? function () {}
         : function warning (messageCode, ...params) {
-          printDebug(kleur.yellow(`[${prefix}] WARNING ${kleur.bold(messageCode)}`) + ` ${paramsFmt(params)}`);
+          printDebug(util.styleText('yellow', `[${prefix}] WARNING ${util.styleText('bold', messageCode)}`) + ` ${paramsFmt(params)}`);
         }
     };
   }
@@ -66,7 +67,8 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  * @typedef {((
  *  url: string,
  *  signals: Object<string,AbortSignal>,
- *  logger: Logger
+ *  logger: Logger,
+ *  debugMode: boolean
  * ) => Promise<void>) & { displayName?: string }} Browser
  */
 
@@ -80,9 +82,11 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  * @typedef {Object} qtap.RunOptions
  * @property {qtap.Config|string} [config] Config object, or path to a qtap.config.js file.
  * Refer to API.md for how to define additional browsers.
- * @property {number} [timeout=30] How long a browser may be quiet between results.
+ * @property {number} [timeout=5] How long a browser may be quiet between results.
  * @property {number} [connectTimeout=60] How many seconds a browser may take to start up.
+ * @property {boolean} [debug=false]
  * @property {boolean} [verbose=false]
+ * @property {string} [reporter="none"]
  * @property {string} [cwd=process.cwd()] Base directory to interpret test file paths
  *  relative to. Ignored if testing from URLs.
  * @property {Function} [printDebug=console.error]
@@ -93,9 +97,9 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  *  to a built-in browser from QTap, or to a key in the optional `config.browsers` object.
  * @param {string|string[]} files Files and/or URLs.
  * @param {qtap.RunOptions} [options]
- * @return {Promise<number>} Exit code. 0 is success, 1 is failed.
+ * @return {EventEmitter}
  */
-async function run (browserNames, files, options = {}) {
+function run (browserNames, files, options = {}) {
   if (typeof browserNames === 'string') browserNames = [browserNames];
   if (typeof files === 'string') files = [files];
 
@@ -104,67 +108,131 @@ async function run (browserNames, files, options = {}) {
     options.printDebug || console.error,
     options.verbose
   );
+  const eventbus = new EventEmitter();
+
+  if (options.reporter) {
+    if (options.reporter in reporters) {
+      logger.debug('reporter_init', options.reporter);
+      reporters[options.reporter](eventbus);
+    } else {
+      logger.warning('reporter_unknown', options.reporter);
+    }
+  }
 
   const servers = [];
   for (const file of files) {
-    servers.push(new ControlServer(options.cwd, file, logger, {
-      idleTimeout: options.timeout,
-      connectTimeout: options.connectTimeout
-    }));
+    servers.push(new ControlServer(
+      options.cwd || process.cwd(),
+      file,
+      eventbus,
+      logger,
+      {
+        idleTimeout: options.timeout || 5,
+        connectTimeout: options.connectTimeout || 60,
+        debugMode: options.debug ?? false,
+      }
+    ));
   }
 
-  // TODO: Add test for config file not found
-  // TODO: Add test for config file with runtime errors
-  // TODO: Add test for relative config file without leading `./`, handled by process.resolve()
-  let config;
-  if (typeof options.config === 'string') {
-    logger.debug('load_config', options.config);
-    config = (await import(path.resolve(process.cwd(), options.config))).default;
-  }
-  const globalController = new AbortController();
-  const globalSignal = globalController.signal;
-
-  const browerPromises = [];
-  for (const browserName of browserNames) {
-    logger.debug('get_browser', browserName);
-    const browserFn = browsers[browserName] || config?.browsers?.[browserName];
-    if (typeof browserFn !== 'function') {
-      throw new Error('Unknown browser ' + browserName);
+  const runPromise = (async () => {
+    // TODO: Add test for config file not found
+    // TODO: Add test for config file with runtime errors
+    // TODO: Add test for relative config file without leading `./`, handled by process.resolve()
+    let config;
+    if (typeof options.config === 'string') {
+      logger.debug('load_config', options.config);
+      config = (await import(path.resolve(process.cwd(), options.config))).default;
     }
-    for (const server of servers) {
-      // Each launchBrowser() returns a Promise that settles when the browser exits.
-      // Launch concurrently, and await afterwards.
-      browerPromises.push(server.launchBrowser(browserFn, browserName, globalSignal));
-    }
-  }
+    const globalController = new AbortController();
+    const globalSignal = globalController.signal;
 
-  try {
-    // Wait for all tests and browsers to finish/stop, regardless of errors thrown,
-    // to avoid dangling browser processes.
-    await Promise.allSettled(browerPromises);
-
-    // Re-wait, this time letting the first of any errors bubble up.
-    for (const browerPromise of browerPromises) {
-      await browerPromise;
+    const browerPromises = [];
+    for (const browserName of browserNames) {
+      logger.debug('get_browser', browserName);
+      const browserFn = browsers[browserName] || config?.browsers?.[browserName];
+      if (typeof browserFn !== 'function') {
+        throw new Error('Unknown browser ' + browserName);
+      }
+      for (const server of servers) {
+        // Each launchBrowser() returns a Promise that settles when the browser exits.
+        // Launch concurrently, and await afterwards.
+        browerPromises.push(server.launchBrowser(browserFn, browserName, globalSignal));
+      }
     }
 
-    logger.debug('shared_cleanup', 'Invoke global signal to clean up shared resources');
-    globalController.abort();
-  } finally {
-    // Make sure we close our server even if the above throws, so that Node.js
-    // may naturally exit (no open ports remaining)
-    for (const server of servers) {
-      server.close();
-    }
-  }
+    const result = {
+      ok: true,
+      exitCode: 0
+    };
+    eventbus.on('bail', () => {
+      result.ok = false;
+      result.exitCode = 1;
+    });
+    eventbus.on('result', (event) => {
+      if (!event.ok) {
+        result.ok = false;
+        result.exitCode = 1;
+      }
+    });
 
-  // TODO: Set exit status to 1 on failures, to ease programmatic use and testing.
-  // TODO: Return an event emitter for custom reporting via programmatic use.
-  return 0;
+    try {
+      // Wait for all tests and browsers to finish/stop, regardless of errors thrown,
+      // to avoid dangling browser processes.
+      await Promise.allSettled(browerPromises);
+
+      // Re-wait, this time letting the first of any errors bubble up.
+      for (const browerPromise of browerPromises) {
+        await browerPromise;
+      }
+
+      logger.debug('shared_cleanup', 'Invoke global signal to clean up shared resources');
+      globalController.abort();
+    } finally {
+      // Make sure we close our server even if the above throws, so that Node.js
+      // may naturally exit (no open ports remaining)
+      for (const server of servers) {
+        server.close();
+      }
+    }
+
+    eventbus.emit('finish', result);
+  })();
+  runPromise.catch((error) => {
+    // Node.js automatically ensures users cannot forget to listen for the 'error' event.
+    // For this reason, runWaitFor() is a separate method, because that converts the
+    // 'error' event into a rejected Promise. If we created that Promise as part of run()
+    // like `return {eventbus, promise}`), then we loose this useful detection, because
+    // we'd have already listened for it. Plus, it causes an unhandledRejection error
+    // for those that only want the events and not the Promise.
+    eventbus.emit('error', error);
+  });
+
+  return eventbus;
+}
+
+/**
+ * Same as run() but can awaited.
+ *
+ * Use this if all you want is a boolean result and/or if you use the 'reporter'
+ * option for any output/display. For detailed events, call run() instead.
+ *
+ * @return {Promise<{ok: boolean, exitCode: number}>}
+ * - ok: true for success, false for failure.
+ * - exitCode: 0 for success, 1 for failure.
+ */
+async function runWaitFor (browserNames, files, options = {}) {
+  const eventbus = run(browserNames, files, options);
+
+  const result = await new Promise((resolve, reject) => {
+    eventbus.on('finish', resolve);
+    eventbus.on('error', reject);
+  });
+  return result;
 }
 
 export default {
   run,
+  runWaitFor,
 
   browsers,
   LocalBrowser: browsers.LocalBrowser,

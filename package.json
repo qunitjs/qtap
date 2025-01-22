@@ -15,8 +15,8 @@
   },
   "main": "src/qtap.js",
   "scripts": {
-    "unit": "qunit",
-    "integration-basic": "node bin/qtap.js -v test/pass.html",
+    "unit": "qunit test/*.js",
+    "integration-basic": "node bin/qtap.js -r none -v test/fixtures/pass.html",
     "lint": "eslint --cache .",
     "lint-fix": "eslint --cache --fix .",
     "types": "tsc",
@@ -24,9 +24,9 @@
   },
   "dependencies": {
     "commander": "12.1.0",
-    "kleur": "4.1.5",
     "tap-parser": "18.0.0",
-    "which": "5.0.0"
+    "which": "5.0.0",
+    "yaml": "^2.4.1"
   },
   "devDependencies": {
     "@types/node": "22.10.5",
@@ -34,7 +34,7 @@
     "eslint": "~8.57.1",
     "eslint-config-semistandard": "~17.0.0",
     "eslint-plugin-qunit": "^8.1.2",
-    "qunit": "2.23.1",
+    "qunit": "2.24.0",
     "semistandard": "~17.0.0",
     "typescript": "5.7.3"
   },

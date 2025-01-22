@@ -55,9 +55,18 @@ jobs:
 
       - run: npm test
 
-      - name: Check system browsers
-        run: node bin/qtap.js -v -b firefox -b chrome -b chromium -b edge test/pass.html
+      - name: Test local browsers (Firefox)
+        run: node bin/qtap.js -b firefox -r none -v --timeout 60 test/fixtures/pass.html
 
-      - name: Check system browsers (Safari)
+      - name: Test local browsers (Chrome)
+        run: node bin/qtap.js -b chrome -r none -v --timeout 60 test/fixtures/pass.html
+
+      - name: Test local browsers (Chromium)
+        run: node bin/qtap.js -b chromium -r none -v --timeout 60 test/fixtures/pass.html
+
+      - name: Test local browsers (Edge)
+        run: node bin/qtap.js -b edge -r none -v --timeout 60 test/fixtures/pass.html
+
+      - name: Test local browsers (Safari)
         if: ${{ runner.os == 'macOS' }}
-        run: node bin/qtap.js -v -b safari test/pass.html
+        run: node bin/qtap.js -b safari -r none -v --timeout 60 test/fixtures/pass.html
