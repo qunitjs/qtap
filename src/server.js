@@ -17,28 +17,44 @@ class ControlServer {
   static nextClientId = 1;
 
   /**
-   * @param {string|undefined} root
+   * @param {string|undefined} cwd
    * @param {string} testFile File path or URL
    * @param {Logger} logger
    * @param {Object} options
    * @param {number|undefined} options.idleTimeout
    * @param {number|undefined} options.connectTimeout
    */
-  constructor (root, testFile, logger, options) {
-    if (!root) {
-      // For `qtap test/index.html`, default root to cwd.
-      root = process.cwd();
-      const relPath = path.relative(root, path.join(root, testFile));
-      const parent = relPath.match(/^[./\\]+/)?.[0];
+  constructor (cwd, testFile, logger, options) {
+    this.logger = logger.channel('qtap_server_' + ControlServer.nextServerId++);
+
+    // For `qtap <url>`, default root to cwd (unused).
+    // For `qtap test/index.html`, default root to cwd.
+    let root = cwd || process.cwd();
+    let testFileAbsolute;
+    if (this.isURL(testFile)) {
+      testFileAbsolute = testFile;
+    } else {
       // For `qtap ../foobar/test/index.html`, default root to ../foobar.
+      //
+      // For `qtap /tmp/foobar/test/index.html`, default root to nearest
+      // common parent dir (i.e. longest common path between file and cwd).
+      //
+      testFileAbsolute = path.join(root, testFile);
+      const relPath = path.relative(root, testFileAbsolute);
+      const parent = relPath.match(/^[./\\]+/)?.[0];
       if (parent) {
         root = path.join(root, parent);
       }
+      // Normalize testFile to "test/index.html".
+      testFile = path.relative(root, testFileAbsolute);
+      if (!testFile || testFile.startsWith('..')) {
+        throw new Error(`Cannot serve ${testFile} from ${root}`);
+      }
+      this.logger.debug('server_testfile_normalized', testFile);
     }
 
     this.root = root;
     this.testFile = testFile;
-    this.logger = logger.channel('qtap_server_' + ControlServer.nextServerId++);
     this.idleTimeout = options.idleTimeout || 30;
     this.connectTimeout = options.connectTimeout || 60;
 
@@ -46,7 +62,7 @@ class ControlServer {
     // Optimization: Prefetch test file in parallel with server creation and browser launching.
     // Once browsers are running and they make their first HTTP request,
     // we'll await this in handleRequest/getTestFile.
-    this.testFilePromise = this.fetchTestFile(this.testFile);
+    this.testFilePromise = this.fetchTestFile(testFileAbsolute);
 
     // Optimization: Don't wait for server to start. Let qtap.js proceed to load config/browsers,
     // and we'll await this later in launchBrowser().
@@ -56,7 +72,7 @@ class ControlServer {
       server.on('listening', () => {
         // @ts-ignore - Not null after listen()
         this.proxyBase = 'http://localhost:' + server.address().port;
-        this.logger.debug('server_listening', `Serving ${this.testFile} at ${this.proxyBase}`);
+        this.logger.debug('server_listening', `Serving ${root} at ${this.proxyBase}`);
         resolve(this.proxyBase);
       });
     });
@@ -189,7 +205,39 @@ class ControlServer {
     };
     clientIdleTimer = setTimeout(qtapCheckTimeout, TIMEOUT_CHECK_MS);
 
-    const url = await this.getProxyBase() + '/?qtap_clientId=' + clientId;
+    // Serve the a test file from URL that looks like the original path when possible.
+    //
+    // - For static files, serve it from a URL that matches were it would be among the
+    //   other static files (even though it is treated special).
+    //   "foo/bar" => "/foo/bar"
+    //   "/tmp/foo/bar" => "/tmp/foo/bar"
+    // - For external URLs, match the URL path, including query params, so that these
+    //   can be seen both server-side and client-side.
+    //
+    // NOTE: This is entirely cosmetic. For how it is fetched, see fetchTestFile().
+    // For how resources are fetched client side, we ensure correctness via <base href>.
+    //
+    // TODO: Add test case to validate this.
+    //
+    // Example: WordPress password-strength-meter.js inspects the hostname and path name
+    // (e.g. www.mysite.test/mysite/). The test case for defaults observes this.
+    // https://github.com/WordPress/wordpress-develop/blob/6.7.1/tests/qunit/wp-admin/js/password-strength-meter.js#L100
+    let qtapUrlPath;
+    if (this.isURL(this.testFile)) {
+      const tmpUrl = new URL(this.testFile);
+      tmpUrl.searchParams.set('qtap_clientId', clientId);
+      qtapUrlPath = tmpUrl.pathname + tmpUrl.search;
+    } else {
+      qtapUrlPath = '/'
+        + (this.testFile
+          .replace(/^\/+/, '')
+          // TODO: Add test case to confirm Windows-file to POSIX-URL normalization.
+          .replace(/\\/g, '/')
+        )
+        + '?qtap_clientId=' + clientId;
+    }
+
+    const url = await this.getProxyBase() + qtapUrlPath;
     const signals = { browser: signal, global: globalSignal };
 
     try {
@@ -217,18 +265,20 @@ class ControlServer {
     const proxyBase = await this.getProxyBase();
     const qtapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
 
-    const base = this.isURL(this.testFile)
-      ? this.testFile
-      // normalize to a path from the browser perspective relative to the web root
-      // especially if it was originally given as an absolute filesystem path
-      : path.relative(this.root, path.join(this.root, this.testFile));
+    let headInjectHtml = `<script>(${fnToStr(qtapClientHead, qtapUrl)})();</script>`;
 
-    let html = await this.testFilePromise;
-
-    // Inject <base> tag so that /test/index.html can refer to files relative to it,
+    // Add <base> tag so that /test/index.html can refer to files relative to it,
     // and URL-based files can fetch their resources directly from the original server.
     // * Prepend as early as possible. If the file has its own <base>, theirs will
     //   come later and correctly "win" by applying last (after ours).
+    if (this.isURL(this.testFile)) {
+      // especially if it was originally given as an absolute filesystem path
+      headInjectHtml = `<base href="${util.escapeHTML(this.testFile)}"/>` + headInjectHtml;
+    }
+
+    let html = await this.testFilePromise;
+
+    // Head injection
     // * Use a callback, to avoid accidental $1 substitutions via user input.
     // * Insert no line breaks, to avoid changing line numbers.
     // * Ignore <heading> and <head-thing>.
@@ -239,7 +289,7 @@ class ControlServer {
       /<!doctype[^>]*>/i,
       /^/
     ],
-    (m) => m + `<base href="${util.escapeHTML(base)}"/><script>(${fnToStr(qtapClientHead, qtapUrl)})();</script>`
+    (m) => m + headInjectHtml
     );
 
     html = util.replaceOnce(html, [
@@ -263,7 +313,8 @@ class ControlServer {
     }
 
     const clientId = url.searchParams.get('qtap_clientId');
-    if (url.pathname === '/' && clientId !== null) {
+    if (clientId !== null) {
+      // Serve the testfile from any URL path, as chosen by launchBrowser()
       const browser = this.browsers.get(clientId);
       if (browser) {
         browser.clientIdleActive = performance.now();

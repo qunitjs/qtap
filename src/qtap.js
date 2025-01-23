@@ -70,8 +70,8 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  * @property {number} [timeout=30] How long a browser may be quiet between results.
  * @property {number} [connectTimeout=60] How many seconds a browser may take to start up.
  * @property {boolean} [verbose=false]
- * @property {string} [root=process.cwd()] Root directory to find files in
- *  and serve up. Ignored if testing from URLs.
+ * @property {string} [cwd=process.cwd()] Base directory to interpret test file paths
+ *  relative to. Ignored if testing from URLs.
  * @property {Function} [printDebug=console.error]
  */
 
@@ -94,7 +94,7 @@ async function run (browserNames, files, options = {}) {
 
   const servers = [];
   for (const file of files) {
-    servers.push(new ControlServer(options.root, file, logger, {
+    servers.push(new ControlServer(options.cwd, file, logger, {
       idleTimeout: options.timeout,
       connectTimeout: options.connectTimeout
     }));
