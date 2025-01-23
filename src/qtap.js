@@ -21,13 +21,26 @@ import { ControlServer } from './server.js';
  * @return {Logger}
  */
 function makeLogger (defaultChannel, printDebug, verbose = false) {
+  // Characters to avoid to ensure easy single lines of CLI debug output
+  // * x00-1F: e.g. NULL, backspace (\b), line breaks (\r\n), ESC,
+  //   ASNI escape codes (terminal colors).
+  // * x74: DEL.
+  // * xA0: non-breaking space.
+  //
+  // See https://en.wikipedia.org/wiki/ASCII#Character_order
+  //
+  // eslint-disable-next-line no-control-regex
+  const rNonObviousStr = /[\x00-\x1F\x7F\xA0]/;
+
   /**
    * @param {Array<any>} params
    * @returns {string}
    */
   const paramsFmt = (params) => params
     .flat()
-    .map(param => typeof param === 'string' ? param : util.inspect(param, { colors: false }))
+    .map(param => typeof param === 'string'
+      ? (rNonObviousStr.test(param) ? JSON.stringify(param) : param)
+      : util.inspect(param, { colors: false }))
     .join(' ');
 
   function channel (prefix) {

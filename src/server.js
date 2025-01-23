@@ -356,11 +356,11 @@ class ControlServer {
       const browser = this.browsers.get(clientId);
       if (browser) {
         const now = performance.now();
-        browser.tapParser.write(body);
         browser.logger.debug('browser_tap_received',
           `+${util.humanSeconds(now - browser.clientIdleActive)}s`,
-          JSON.stringify(body.slice(0, 30) + '…')
+          body.slice(0, 30) + '…'
         );
+        browser.tapParser.write(body);
 
         browser.clientIdleActive = performance.now();
       } else {
