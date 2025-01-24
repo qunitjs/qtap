@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<title>uncaught-mid</title>
 <script>
 console.log('TAP version 13');
 console.log('ok 1 Foo bar');
@@ -14,4 +13,8 @@ setTimeout(() => {
 setTimeout(() => {
   bar(); // Uncaught ReferenceError
 }, 200);
+
+setTimeout(() => {
+  console.log('Bail out! End of fixture'); // Don't wait for timeout
+}, 300);
 </script>

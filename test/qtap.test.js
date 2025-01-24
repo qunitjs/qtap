@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 const root = path.join(__dirname, '..');
 const options = {
   root,
-  timeout: 2,
+  timeout: 30,
   verbose: !!process.env.CI,
   // verbose: true, // debugging
   printDebug: (str) => { console.error('# ' + str); }
@@ -55,11 +55,14 @@ QUnit.module('qtap', function () {
     },
     failAndTimeout: {
       files: 'test/fixtures/fail-and-timeout.html',
-      options,
+      options: {
+        ...options,
+        timeout: 5
+      },
       expected: [
         'client: running test/fixtures/fail-and-timeout.html',
         'online',
-        'bail: Browser idle for 2s',
+        'bail: Browser idle for 5s',
       ],
       exitCode: 1
     },
@@ -69,8 +72,8 @@ QUnit.module('qtap', function () {
       expected: [
         'client: running test/fixtures/fail-and-uncaught.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/fail-and-uncaught.html:15',
-        'bail: Browser idle for 2s',
+        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/fail-and-uncaught.html:14',
+        'bail: End of fixture',
       ],
       exitCode: 1
     },
@@ -109,10 +112,7 @@ QUnit.module('qtap', function () {
     },
     qunitPass: {
       files: 'test/fixtures/qunit-pass.html',
-      options: {
-        ...options,
-        timeout: 30,
-      },
+      options,
       expected: [
         'client: running test/fixtures/qunit-pass.html',
         'online',
@@ -122,10 +122,7 @@ QUnit.module('qtap', function () {
     },
     qunitNotests: {
       files: 'test/fixtures/qunit-notests.html',
-      options: {
-        ...options,
-        timeout: 30,
-      },
+      options,
       expected: [
         'client: running test/fixtures/qunit-notests.html',
         'online',
@@ -135,10 +132,7 @@ QUnit.module('qtap', function () {
     },
     qunitFail: {
       files: 'test/fixtures/qunit-fail.html',
-      options: {
-        ...options,
-        timeout: 30,
-      },
+      options,
       expected: [
         'client: running test/fixtures/qunit-fail.html',
         'online',
@@ -168,11 +162,14 @@ QUnit.module('qtap', function () {
     },
     timeout: {
       files: 'test/fixtures/timeout.html',
-      options,
+      options: {
+        ...options,
+        timeout: 5
+      },
       expected: [
         'client: running test/fixtures/timeout.html',
         'online',
-        'bail: Browser idle for 2s',
+        'bail: Browser idle for 5s',
       ],
       exitCode: 1
     },
@@ -192,8 +189,8 @@ QUnit.module('qtap', function () {
       expected: [
         'client: running test/fixtures/uncaught-early.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-early.html:4',
-        'bail: Browser idle for 2s',
+        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-early.html:3',
+        'bail: End of fixture',
       ],
       exitCode: 1
     },
@@ -203,8 +200,8 @@ QUnit.module('qtap', function () {
       expected: [
         'client: running test/fixtures/uncaught-mid.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-mid.html:6',
-        'bail: Browser idle for 2s',
+        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-mid.html:5',
+        'bail: End of fixture',
       ],
       exitCode: 1
     },
@@ -224,8 +221,8 @@ QUnit.module('qtap', function () {
       expected: [
         'client: running test/fixtures/uncaught-custom.html',
         'online',
-        'consoleerror: Error: Boo\n  at /test/fixtures/uncaught-custom.html:4',
-        'bail: Browser idle for 2s',
+        'consoleerror: Error: Boo\n  at /test/fixtures/uncaught-custom.html:3',
+        'bail: End of fixture',
       ],
       exitCode: 1
     },
@@ -235,14 +232,14 @@ QUnit.module('qtap', function () {
       expected: [
         'client: running test/fixtures/uncaught-multiple.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-multiple.html:4'
-          + '\nReferenceError: quux is not defined\n  at /test/fixtures/uncaught-multiple.html:7',
-        'bail: Browser idle for 2s',
+        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-multiple.html:3'
+          + '\nReferenceError: quux is not defined\n  at /test/fixtures/uncaught-multiple.html:6',
+        'bail: End of fixture',
       ],
       exitCode: 1
     },
   }, async function (assert, params) {
-    assert.timeout(10_000);
+    assert.timeout(40_000);
 
     const run = qtap.run(
       'firefox',

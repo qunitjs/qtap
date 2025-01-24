@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<title>uncaught-early</title>
 <script>
 bar(); // Uncaught ReferenceError
+</script>
+<script>
+setTimeout(function () {
+    console.log('Bail out! End of fixture'); // Don't wait for timeout
+});
 </script>

@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<title>timeout</title>
 <script>
 console.log('TAP version 13');
 function delay(ms, fn) {
@@ -13,11 +12,6 @@ delay(500, () => {
 
     delay(3200, () => {
       console.log('ok 3 Baz > another thing');
-
-      delay(4000, () => {
-        console.log('ok 4 Quux');
-        console.log('1..4');
-      });
     });
   });
 });
