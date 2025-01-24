@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<title>console</title>
+<script>
+console.log('TAP version 13');
+
+console.warn('My warning', 1, { arr: [ true, 3 ] });
+console.error('My error', 1, { arr: [ true, 3 ] });
+
+function createCyclical () {
+  var cyclical = { a: 'example' };
+  cyclical.cycle = cyclical;
+  return cyclical;
+}
+console.warn('Cyclical object', createCyclical());
+
+setTimeout(function () {
+  console.log('ok 1 Foo bar');
+  console.log('1..1');
+}, 50);
+</script>

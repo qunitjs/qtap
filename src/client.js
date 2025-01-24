@@ -32,6 +32,54 @@ export function qtapClientHead () {
   var log = console.log && console.log.apply ? console.log : function () {};
   var warn = console.warn && console.warn.apply ? console.warn : function () {};
   var error = console.error && console.error.apply ? console.error : function () {};
+  var jsonStringify = JSON.stringify.bind(JSON);
+  var toString = Object.prototype.toString;
+  var hasOwn = Object.prototype.hasOwnProperty;
+
+  /**
+   * Create a shallow clone of an object, with cycles replaced by "[Circular]".
+   */
+  function decycledShallowClone (object, ancestors) {
+    ancestors = ancestors || [];
+    if (ancestors.indexOf(object) !== -1) {
+      return '[Circular]';
+    }
+    if (ancestors.length > 100) {
+      return '...';
+    }
+    var type = toString.call(object).replace(/^\[.+\s(.+?)]$/, '$1').toLowerCase();
+    var clone;
+    switch (type) {
+      case 'array':
+        ancestors.push(object);
+        clone = [];
+        for (var i = 0; i < object.length; i++) {
+          clone[i] = decycledShallowClone(object[i], ancestors);
+        }
+        ancestors.pop();
+        break;
+      case 'object':
+        ancestors.push(object);
+        clone = {};
+        for (var key in object) {
+          if (hasOwn.call(object, key)) {
+            clone[key] = decycledShallowClone(object[key], ancestors);
+          }
+        }
+        ancestors.pop();
+        break;
+      default:
+        clone = object;
+    }
+    return clone;
+  }
+
+  function stringify (data) {
+    if (typeof data !== 'object') {
+      return '' + data;
+    }
+    return jsonStringify(decycledShallowClone(data));
+  }
 
   function createBufferedWrite (url) {
     var buffer = '';
@@ -71,13 +119,21 @@ export function qtapClientHead () {
     return log.apply(console, arguments);
   };
 
-  console.warn = function qtapConsoleWarn (str) {
-    writeConsoleError('' + str);
+  console.warn = function qtapConsoleWarn () {
+    var str = [];
+    for (var i = 0; i < arguments.length; i++) {
+      str[i] = stringify(arguments[i]);
+    }
+    writeConsoleError(str.join(' '));
     return warn.apply(console, arguments);
   };
 
-  console.error = function qtapConsoleError (str) {
-    writeConsoleError('' + str);
+  console.error = function qtapConsoleError () {
+    var str = [];
+    for (var i = 0; i < arguments.length; i++) {
+      str[i] = stringify(arguments[i]);
+    }
+    writeConsoleError(str.join(' '));
     return error.apply(console, arguments);
   };
 

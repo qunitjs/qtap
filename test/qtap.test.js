@@ -84,6 +84,19 @@ QUnit.module('qtap', function () {
       ],
       exitCode: 1
     },
+    console: {
+      files: 'test/fixtures/console.html',
+      options,
+      expected: [
+        'client: running test/fixtures/console.html',
+        'online',
+        'consoleerror: My warning 1 {"arr":[true,3]}'
+          + '\nMy error 1 {"arr":[true,3]}'
+          + '\nCyclical object {"a":"example","cycle":"[Circular]"}',
+        'result: { ok: true, total: 1, passed: 1, failed: 0 }',
+      ],
+      exitCode: 0
+    },
     mocking: {
       files: 'test/fixtures/mocking.html',
       options,
@@ -106,6 +119,19 @@ QUnit.module('qtap', function () {
         'result: { ok: true, total: 1, passed: 1, failed: 0 }',
       ],
       exitCode: 0
+    },
+    qunitNotests: {
+      files: 'test/fixtures/qunit-notests.html',
+      options: {
+        ...options,
+        timeout: 30,
+      },
+      expected: [
+        'client: running test/fixtures/qunit-notests.html',
+        'online',
+        'result: { ok: false, total: 1, passed: 0, failed: 1 }',
+      ],
+      exitCode: 1
     },
     qunitFail: {
       files: 'test/fixtures/qunit-fail.html',

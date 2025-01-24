@@ -137,7 +137,11 @@ class ControlServer {
     // fetch() does not yet support file URLs (as of Node.js 21).
     if (this.isURL(file)) {
       this.logger.debug('testfile_fetch', `Requesting a copy of ${file}`);
-      return await (await fetch(file)).text();
+      const resp = await fetch(file);
+      if (!resp.ok) {
+        throw new Error('Remote URL responded with HTTP ' + resp.status);
+      }
+      return await resp.text();
     } else {
       this.logger.debug('testfile_read', `Reading file contents from ${file}`);
       return (await fsPromises.readFile(file)).toString();
@@ -367,16 +371,20 @@ class ControlServer {
     if (clientId !== null) {
       // Serve the testfile from any URL path, as chosen by launchBrowser()
       const browser = this.browsers.get(clientId);
-      if (browser) {
-        browser.clientIdleActive = performance.now();
-        browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
-        this.eventbus.emit('online', { clientId });
-      } else {
-        this.logger.debug('respond_static_testfile', clientId);
+      if (!browser) {
+        this.logger.debug('browser_connected_unknown', clientId);
+        return this.serveError(resp, 403, 'Forbidden');
       }
+
+      browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
+      this.eventbus.emit('online', { clientId });
+
       resp.writeHead(200, { 'Content-Type': util.MIME_TYPES[ext] || util.MIME_TYPES.html });
       resp.write(await this.getTestFile(clientId));
       resp.end();
+
+      // Count proxying the test file toward connectTimeout, not idleTimeout.
+      browser.clientIdleActive = performance.now();
       return;
     }
 
@@ -414,8 +422,7 @@ class ControlServer {
           bodyExcerpt
         );
         browser.tapParser.write(body);
-
-        browser.clientIdleActive = performance.now();
+        browser.clientIdleActive = now;
       } else {
         this.logger.debug('browser_tap_unhandled', clientId, bodyExcerpt);
       }

@@ -89,9 +89,8 @@ function plain (eventbus) {
     console.log(util.styleText('grey', `[${event.clientId}]`) + ` Error! ${event.reason}`);
   });
   eventbus.on('result', (event) => {
-    console.log(util.styleText('grey', `[${event.clientId}]`) + ' Finished!');
-    // TODO: Tests completed, X passed [, X failed ] [, X skipped ].
     // TODO: Report wall-clock runtime
+    console.log(util.styleText('grey', `[${event.clientId}]`) + ` Finished! Ran ${event.total} tests, ${event.failed} failed.`);
 
     if (event.skips.length) {
       const minimalResults = event.skips.map((result) => {
