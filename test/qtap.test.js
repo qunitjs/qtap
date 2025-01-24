@@ -84,6 +84,16 @@ QUnit.module('qtap', function () {
       ],
       exitCode: 1
     },
+    mocking: {
+      files: 'test/fixtures/mocking.html',
+      options,
+      expected: [
+        'client: running test/fixtures/mocking.html',
+        'online',
+        'result: { ok: true, total: 4, passed: 4, failed: 0 }',
+      ],
+      exitCode: 0
+    },
     qunitPass: {
       files: 'test/fixtures/qunit-pass.html',
       options: {

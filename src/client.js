@@ -1,5 +1,5 @@
 /* eslint-disable no-var -- Browser code */
-/* global XMLHttpRequest, QUnit */
+/* global QUnit */
 // @ts-nocheck
 
 export function fnToStr (fn, qtapTapUrl, qtapStderrUrl) {
@@ -21,6 +21,10 @@ export function fnToStr (fn, qtapTapUrl, qtapStderrUrl) {
 export function qtapClientHead () {
   // Support QUnit 2.24+: Enable TAP reporter, declaratively.
   window.qunit_config_reporters_tap = true;
+
+  // Cache references to original methods, to avoid getting trapped by mocks (e.g. Sinon)
+  var setTimeout = window.setTimeout;
+  var XMLHttpRequest = window.XMLHttpRequest;
 
   // Support IE 9: console.log.apply is undefined.
   // Don't bother with Function.apply.call. Skip super call instead.
@@ -68,17 +72,17 @@ export function qtapClientHead () {
   };
 
   console.warn = function qtapConsoleWarn (str) {
-    writeConsoleError(String(str));
+    writeConsoleError('' + str);
     return warn.apply(console, arguments);
   };
 
   console.error = function qtapConsoleError (str) {
-    writeConsoleError(String(str));
+    writeConsoleError('' + str);
     return error.apply(console, arguments);
   };
 
   function errorString (error) {
-    var str = String(error);
+    var str = '' + error;
     if (str.slice(0, 7) === '[object') {
       // Based on https://es5.github.io/#x15.11.4.4
       return (error.name || 'Error') + (error.message ? (': ' + error.message) : '');
