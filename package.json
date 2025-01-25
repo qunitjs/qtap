@@ -16,11 +16,11 @@
   "main": "src/qtap.js",
   "scripts": {
     "unit": "qunit test/*.js",
-    "integration-basic": "node bin/qtap.js -r none -v test/fixtures/pass.html",
     "lint": "eslint --cache .",
     "lint-fix": "eslint --cache --fix .",
     "types": "tsc",
-    "test": "npm run -s integration-basic && npm run -s unit && npm run lint && npm run types"
+    "test": "npm run -s unit && npm run lint && npm run types && npm run -s integration-demo",
+    "integration-demo": "node bin/qtap.js -v test/fixtures/pass.html"
   },
   "dependencies": {
     "commander": "12.1.0",

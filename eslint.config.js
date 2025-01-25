@@ -30,6 +30,9 @@ export default [
         QUnit: 'readonly'
       }
     },
-    ...qunitRecommended
+    ...qunitRecommended,
+    rules: {
+      'object-property-newline': 'off',
+    }
   }
 ];

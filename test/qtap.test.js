@@ -3,36 +3,102 @@ import { fileURLToPath } from 'url';
 import util from 'node:util';
 
 import qtap from '../src/qtap.js';
+import { ControlServer } from '../src/server.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const root = path.join(__dirname, '..');
+const cwd = path.join(__dirname, '..');
 const options = {
-  root,
-  timeout: 30,
+  cwd,
+  idleTimeout: 30,
   verbose: !!process.env.CI,
   // verbose: true, // debugging
   printDebug: (str) => { console.error('# ' + str); }
 };
 
 function debugReporter (eventbus) {
-  const steps = [];
-  eventbus.on('client', (event) => steps.push(`client: running ${event.testFile}`));
-  eventbus.on('online', () => steps.push('online'));
-  eventbus.on('bail', (event) => steps.push(`bail: ${event.reason}`));
-  eventbus.on('consoleerror', (event) => steps.push(`consoleerror: ${event.message}`));
+  const events = [];
+  eventbus.on('client', (event) => events.push(`client: running ${event.testFile}`));
+  eventbus.on('online', () => events.push('online'));
+  eventbus.on('bail', (event) => events.push(`bail: ${event.reason}`));
+  eventbus.on('consoleerror', (event) => events.push(`consoleerror: ${event.message}`));
   eventbus.on('result', (event) => {
     delete event.clientId;
     delete event.skips;
     delete event.todos;
     delete event.failures;
-    steps.push(`result: ${util.inspect(event, { colors: false })}`);
+    events.push(`result: ${util.inspect(event, { colors: false })}`);
   });
-  return steps;
+  return events;
 }
 
-QUnit.module('qtap', function () {
-  QUnit.test.each('run', {
+const EXPECTED_FAKE_PASS_4 = {
+  ok: true,
+  exitCode: 0,
+  results: {
+    client_1: {
+      clientId: 'client_1',
+      ok: true, total: 4, passed: 4, failed: 0,
+      skips: [], todos: [], failures: [],
+    }
+  },
+  bails: {},
+};
+
+QUnit.module('qtap', function (hooks) {
+  hooks.beforeEach(() => {
+    ControlServer.nextClientId = 1;
+  });
+
+  QUnit.test.each('runWaitFor()', {
+    basic: {
+      files: 'test/fixtures/fake_pass_4.txt',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js'
+      },
+      expected: EXPECTED_FAKE_PASS_4
+    },
+    'options.cwd': {
+      files: 'fixtures/fake_pass_4.txt',
+      options: {
+        ...options,
+        cwd: __dirname,
+        config: 'fixtures/qtap.config.js'
+      },
+      expected: EXPECTED_FAKE_PASS_4
+    },
+    'options.cwd files=../parent/file': {
+      files: '../fake_pass_4.txt',
+      options: {
+        ...options,
+        cwd: path.join(__dirname, 'fixtures/subdir/'),
+        config: '../qtap.config.js'
+      },
+      expected: EXPECTED_FAKE_PASS_4
+    },
+    'options.cwd files=/full/path/file': {
+      files: path.join(__dirname, 'fixtures/fake_pass_4.txt'),
+      options: {
+        ...options,
+        cwd: path.join(__dirname, 'fixtures/subdir/'),
+        config: path.join(__dirname, 'fixtures/qtap.config.js')
+      },
+      expected: EXPECTED_FAKE_PASS_4
+    }
+  }, async function (assert, params) {
+    assert.timeout(40_000);
+
+    const finish = await qtap.runWaitFor(
+      'fake',
+      params.files,
+      params.options
+    );
+
+    assert.deepEqual(finish, params.expected);
+  });
+
+  QUnit.test.each('run() events', {
     pass: {
       files: 'test/fixtures/pass.html',
       options,
@@ -57,7 +123,7 @@ QUnit.module('qtap', function () {
       files: 'test/fixtures/fail-and-timeout.html',
       options: {
         ...options,
-        timeout: 5
+        idleTimeout: 5
       },
       expected: [
         'client: running test/fixtures/fail-and-timeout.html',
@@ -164,7 +230,7 @@ QUnit.module('qtap', function () {
       files: 'test/fixtures/timeout.html',
       options: {
         ...options,
-        timeout: 5
+        idleTimeout: 5
       },
       expected: [
         'client: running test/fixtures/timeout.html',
@@ -241,19 +307,14 @@ QUnit.module('qtap', function () {
   }, async function (assert, params) {
     assert.timeout(40_000);
 
-    const run = qtap.run(
-      'firefox',
-      params.files,
-      params.options
-    );
-
-    const steps = debugReporter(run);
+    const run = qtap.run('firefox', params.files, params.options);
+    const events = debugReporter(run);
     const result = await new Promise((resolve, reject) => {
       run.on('finish', resolve);
       run.on('error', reject);
     });
 
-    assert.deepEqual(steps, params.expected, 'Output');
+    assert.deepEqual(events, params.expected, 'Output');
     assert.deepEqual(result.exitCode, params.exitCode, 'Exit code');
   });
 });

@@ -17,21 +17,21 @@ class ControlServer {
   static nextClientId = 1;
 
   /**
-   * @param {string} cwd
    * @param {string} testFile File path or URL
    * @param {events.EventEmitter} eventbus
    * @param {Logger} logger
    * @param {Object} options
+   * @param {string} options.cwd
    * @param {number} options.idleTimeout
    * @param {number} options.connectTimeout
    * @param {boolean} options.debugMode
    */
-  constructor (cwd, testFile, eventbus, logger, options) {
+  constructor (testFile, eventbus, logger, options) {
     this.logger = logger.channel('qtap_server_' + ControlServer.nextServerId++);
 
     // For `qtap <url>`, default root to cwd (unused).
     // For `qtap test/index.html`, default root to cwd.
-    let root = cwd;
+    let root = options.cwd;
     let testFileAbsolute;
     if (this.isURL(testFile)) {
       testFileAbsolute = testFile;
@@ -41,7 +41,7 @@ class ControlServer {
       // For `qtap /tmp/foobar/test/index.html`, default root to nearest
       // common parent dir (i.e. longest common path between file and cwd).
       //
-      testFileAbsolute = path.join(root, testFile);
+      testFileAbsolute = path.resolve(root, testFile);
       const relPath = path.relative(root, testFileAbsolute);
       const parent = relPath.match(/^[./\\]+/)?.[0];
       if (parent) {

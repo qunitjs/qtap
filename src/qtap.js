@@ -82,9 +82,9 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  * @typedef {Object} qtap.RunOptions
  * @property {qtap.Config|string} [config] Config object, or path to a qtap.config.js file.
  * Refer to API.md for how to define additional browsers.
- * @property {number} [timeout=5] How long a browser may be quiet between results.
+ * @property {number} [idleTimeout=5] How long a browser may be quiet between results.
  * @property {number} [connectTimeout=60] How many seconds a browser may take to start up.
- * @property {boolean} [debug=false]
+ * @property {boolean} [debugMode=false]
  * @property {boolean} [verbose=false]
  * @property {string} [reporter="none"]
  * @property {string} [cwd=process.cwd()] Base directory to interpret test file paths
@@ -96,12 +96,19 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  * @param {string|string[]} browserNames One or more browser names, referring either
  *  to a built-in browser from QTap, or to a key in the optional `config.browsers` object.
  * @param {string|string[]} files Files and/or URLs.
- * @param {qtap.RunOptions} [options]
+ * @param {qtap.RunOptions} [runOptions]
  * @return {EventEmitter}
  */
-function run (browserNames, files, options = {}) {
+function run (browserNames, files, runOptions = {}) {
   if (typeof browserNames === 'string') browserNames = [browserNames];
   if (typeof files === 'string') files = [files];
+  const options = {
+    cwd: process.cwd(),
+    idleTimeout: 5,
+    connectTimeout: 60,
+    debugMode: false,
+    ...runOptions
+  };
 
   const logger = makeLogger(
     'qtap_main',
@@ -121,17 +128,7 @@ function run (browserNames, files, options = {}) {
 
   const servers = [];
   for (const file of files) {
-    servers.push(new ControlServer(
-      options.cwd || process.cwd(),
-      file,
-      eventbus,
-      logger,
-      {
-        idleTimeout: options.timeout || 5,
-        connectTimeout: options.connectTimeout || 60,
-        debugMode: options.debug ?? false,
-      }
-    ));
+    servers.push(new ControlServer(file, eventbus, logger, options));
   }
 
   const runPromise = (async () => {
@@ -141,7 +138,7 @@ function run (browserNames, files, options = {}) {
     let config;
     if (typeof options.config === 'string') {
       logger.debug('load_config', options.config);
-      config = (await import(path.resolve(process.cwd(), options.config))).default;
+      config = (await import(path.resolve(options.cwd, options.config))).default;
     }
     const globalController = new AbortController();
     const globalSignal = globalController.signal;
@@ -160,19 +157,23 @@ function run (browserNames, files, options = {}) {
       }
     }
 
-    const result = {
+    const finish = {
       ok: true,
-      exitCode: 0
+      exitCode: 0,
+      bails: {},
+      results: {}
     };
-    eventbus.on('bail', () => {
-      result.ok = false;
-      result.exitCode = 1;
+    eventbus.on('bail', (event) => {
+      finish.ok = false;
+      finish.exitCode = 1;
+      finish.bails[event.clientId] = event;
     });
     eventbus.on('result', (event) => {
       if (!event.ok) {
-        result.ok = false;
-        result.exitCode = 1;
+        finish.ok = false;
+        finish.exitCode = 1;
       }
+      finish.results[event.clientId] = event;
     });
 
     try {
@@ -195,7 +196,7 @@ function run (browserNames, files, options = {}) {
       }
     }
 
-    eventbus.emit('finish', result);
+    eventbus.emit('finish', finish);
   })();
   runPromise.catch((error) => {
     // Node.js automatically ensures users cannot forget to listen for the 'error' event.

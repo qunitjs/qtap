@@ -71,10 +71,10 @@ if (opts.version) {
   try {
     const result = await qtap.runWaitFor(opts.browser, program.args, {
       config: opts.config,
-      timeout: opts.timeout,
+      idleTimeout: opts.timeout,
       connectTimeout: opts.connectTimeout,
       reporter: opts.reporter,
-      debug: opts.debug || (process.env.QTAP_DEBUG === '1'),
+      debugMode: opts.debug || (process.env.QTAP_DEBUG === '1'),
       verbose: opts.debug || opts.verbose,
     });
     process.exit(result.exitCode);

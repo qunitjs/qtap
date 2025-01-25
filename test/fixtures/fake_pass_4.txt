@@ -1,0 +1,6 @@
+TAP version 13
+ok 1 Foo bar
+ok 2 Baz > this thing
+ok 3 Baz > another thing
+ok 4 Quux
+1..4
