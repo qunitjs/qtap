@@ -1,8 +1,9 @@
 'use strict';
 
 import { EventEmitter } from 'node:events';
-import util from 'node:util';
 import path from 'node:path';
+import url from 'node:url';
+import util from 'node:util';
 
 import browsers from './browsers.js';
 import reporters from './reporters.js';
@@ -138,7 +139,11 @@ function run (browserNames, files, runOptions = {}) {
     let config;
     if (typeof options.config === 'string') {
       logger.debug('load_config', options.config);
-      config = (await import(path.resolve(options.cwd, options.config))).default;
+      // Support Windows: Unlike require(), import() also both file paths and URLs.
+      // Windows file paths are mistaken for URLs ("C:" is protocol-like), and must
+      // thus be converted to file:// URLs first.
+      const configFileUrl = url.pathToFileURL(path.resolve(options.cwd, options.config)).toString();
+      config = (await import(configFileUrl)).default;
     }
     const globalController = new AbortController();
     const globalSignal = globalController.signal;
