@@ -83,7 +83,7 @@ function plain (eventbus) {
     console.log(util.styleText('grey', `[${event.clientId}]`) + ' Running...');
   });
   eventbus.on('consoleerror', (event) => {
-    console.log(util.styleText('grey', `[${event.clientId}]`) + ' Console:\n' + event.message);
+    console.log(util.styleText('grey', `[${event.clientId}]`) + ' Console:\n' + util.styleText('yellow', event.message));
   });
   eventbus.on('bail', (event) => {
     console.log(util.styleText('grey', `[${event.clientId}]`) + ` Error! ${event.reason}`);
