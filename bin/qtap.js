@@ -29,6 +29,12 @@ program
       .default(optionBrowserDefault, '"detect"')
   )
   .option('-c, --config <file>', 'Optional config file to define additional browsers.')
+  .option('--cwd <dir>', 'Root directory for the static file server.\n'
+      + 'The default is process.cwd() or the nearest parent directory of\n'
+      + 'the tested file (e.g. "parent" in "../parent/index.html").\n'
+      + 'If your HTML assumes a lower root in your project, set this accordingly.\n'
+      + 'This is ignored when testing by URL instead of file.'
+  )
   .option('--timeout <number>',
     'The maximum timeout of any single test.\n'
       + 'The test is stopped if it takes longer than this between results.',
@@ -73,6 +79,7 @@ if (opts.version) {
 } else {
   try {
     const result = await qtap.runWaitFor(program.args, opts.browser, {
+      cwd: opts.cwd || process.cwd(),
       config: opts.config,
       idleTimeout: opts.timeout,
       connectTimeout: opts.connectTimeout,

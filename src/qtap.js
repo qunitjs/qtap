@@ -81,6 +81,7 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
 
 /**
  * @typedef {Object} qtap.RunOptions
+ *  relative to. Ignored if testing from URLs.
  * @property {qtap.Config|string} [config] Config object, or path to a qtap.config.js file.
  * Refer to API.md for how to define additional browsers.
  * @property {number} [idleTimeout=5] How long a browser may be quiet between results.
@@ -89,7 +90,6 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  * @property {boolean} [verbose=false]
  * @property {string} [reporter="none"]
  * @property {string} [cwd=process.cwd()] Base directory to interpret test file paths
- *  relative to. Ignored if testing from URLs.
  * @property {Function} [printDebug=console.error]
  */
 
@@ -117,6 +117,8 @@ function run (files, browserNames = 'detect', runOptions = {}) {
     debugMode: false,
     ...runOptions
   };
+  // If --cwd is set to an relative path, expand it for consistency.
+  options.cwd = path.resolve(options.cwd);
 
   const logger = makeLogger(
     'qtap_main',
