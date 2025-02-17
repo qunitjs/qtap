@@ -2,7 +2,7 @@
 /* global QUnit */
 // @ts-nocheck
 
-export function fnToStr (fn, qtapTapUrl, qtapStderrUrl) {
+export function fnToStr (fn, qtapTapUrl) {
   return fn
     .toString()
     .replace(/\/\/.+$/gm, '')
@@ -10,10 +10,6 @@ export function fnToStr (fn, qtapTapUrl, qtapStderrUrl) {
     .replace(
       /'{{QTAP_TAP_URL}}'/g,
       JSON.stringify(qtapTapUrl)
-    )
-    .replace(
-      /'{{QTAP_STDERR_URL}}'/g,
-      JSON.stringify(qtapStderrUrl)
     );
 }
 
@@ -110,7 +106,11 @@ export function qtapClientHead () {
   }
 
   var writeTap = createBufferedWrite('{{QTAP_TAP_URL}}');
-  var writeConsoleError = createBufferedWrite('{{QTAP_STDERR_URL}}');
+
+  function writeConsoleError (str) {
+    var prefix = '# console: ';
+    writeTap(prefix + str.replace(/\n/g, '\n' + prefix));
+  }
 
   console.log = function qtapConsoleLog (str) {
     if (typeof str === 'string') {

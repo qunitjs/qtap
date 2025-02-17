@@ -224,8 +224,10 @@ export default {
   edge,
   safari,
 
+  // TODO: Create a 'manual' browser that just prints the URL
+
   // TODO: browserstack
   // TODO: saucelabs
   // TODO: puppeteer_coverage { outputDir: instanbul }
-  // TODO: integration test with puppeteer_coverage and nyc console+html output
+  //       Create a test with puppeteer_coverage and nyc console+html output
 };

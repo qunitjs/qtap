@@ -104,9 +104,6 @@ class ControlServer {
           case '/.qtap/tap/':
             this.handleTap(req, url, resp);
             break;
-          case '/.qtap/stderr/':
-            this.handleStderr(req, url, resp);
-            break;
           default:
             await this.handleRequest(req, url, resp);
         }
@@ -215,6 +212,31 @@ class ControlServer {
       logger.warning('browser_tap_bailout', `Test run bailed, stopping browser. Reason: ${reason}`);
       stopBrowser('browser_tap_bailout', reason);
     });
+
+    tapParser.on('comment', (comment) => {
+      if (!comment.startsWith('# console: ')) {
+        return;
+      }
+
+      // Serve information as transparently as possible
+      // - Strip the prefix we added in /src/client.js
+      // - Strip the proxyBase and qtap_clientId param we added
+      const message = comment
+        .replace('# console: ', '')
+        .replace(/\n$/, '')
+        .replace(/^( {2}at )(http:\S+):(\S+)(?=\n|$)/gm, (m, at, frameUrlStr, lineno) => {
+          const frameUrl = new URL(frameUrlStr);
+          if (frameUrl.origin === this.proxyBase) {
+            return at + frameUrl.pathname + ':' + lineno;
+          }
+          return m;
+        });
+      this.eventbus.emit('consoleerror', {
+        clientId,
+        message
+      });
+    });
+
     // Debugging
     // tapParser.on('line', logger.debug.bind(logger, 'browser_tap_line'));
     // tapParser.on('assert', logger.debug.bind(logger, 'browser_tap_assert'));
@@ -318,9 +340,8 @@ class ControlServer {
   async getTestFile (clientId) {
     const proxyBase = await this.getProxyBase();
     const qtapTapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
-    const qtapStderrUrl = proxyBase + '/.qtap/stderr/?qtap_clientId=' + clientId;
 
-    let headInjectHtml = `<script>(${fnToStr(qtapClientHead, qtapTapUrl, qtapStderrUrl)})();</script>`;
+    let headInjectHtml = `<script>(${fnToStr(qtapClientHead, qtapTapUrl)})();</script>`;
 
     // and URL-based files can fetch their resources directly from the original server.
     // * Prepend as early as possible. If the file has its own <base>, theirs will
@@ -352,7 +373,7 @@ class ControlServer {
       /<\/html>(?![\s\S]*<\/html>)/i,
       /$/
     ],
-    (m) => '<script>(' + fnToStr(qtapClientBody, qtapTapUrl, qtapStderrUrl) + ')();</script>' + m
+    (m) => '<script>(' + fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
     );
 
     return html;
@@ -425,37 +446,6 @@ class ControlServer {
         browser.clientIdleActive = now;
       } else {
         this.logger.debug('browser_tap_unhandled', clientId, bodyExcerpt);
-      }
-    });
-    resp.writeHead(204);
-    resp.end();
-  }
-
-  handleStderr (req, url, resp) {
-    let body = '';
-    req.on('data', (data) => {
-      body += data;
-    });
-    req.on('end', () => {
-      const clientId = url.searchParams.get('qtap_clientId');
-      const browser = this.browsers.get(clientId);
-      if (browser) {
-        browser.logger.warning('browser_stderr_received', clientId, body);
-        // Serve information as transparently as possible
-        // Strip the proxyBase and query params (e.g. qtap_clientId)
-        const message = body.trimEnd().replace(/^( {2}at )(http:\S+):(\S+)(?=\n|$)/gm, (m, at, frameUrlStr, lineno) => {
-          const frameUrl = new URL(frameUrlStr);
-          if (frameUrl.origin === this.proxyBase) {
-            return at + frameUrl.pathname + ':' + lineno;
-          }
-          return m;
-        });
-        this.eventbus.emit('consoleerror', {
-          clientId,
-          message
-        });
-      } else {
-        browser.logger.debug('browser_stderr_unhandled', clientId, body);
       }
     });
     resp.writeHead(204);

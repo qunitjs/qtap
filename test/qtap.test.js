@@ -138,7 +138,8 @@ QUnit.module('qtap', function (hooks) {
       expected: [
         'client: running test/fixtures/fail-and-uncaught.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/fail-and-uncaught.html:14',
+        'consoleerror: ReferenceError: bar is not defined',
+        'consoleerror:   at /test/fixtures/fail-and-uncaught.html:14',
         'bail: End of fixture',
       ],
       exitCode: 1
@@ -159,9 +160,9 @@ QUnit.module('qtap', function (hooks) {
       expected: [
         'client: running test/fixtures/console.html',
         'online',
-        'consoleerror: My warning 1 {"arr":[true,3]}'
-          + '\nMy error 1 {"arr":[true,3]}'
-          + '\nCyclical object {"a":"example","cycle":"[Circular]"}',
+        'consoleerror: My warning 1 {"arr":[true,3]}',
+        'consoleerror: My error 1 {"arr":[true,3]}',
+        'consoleerror: Cyclical object {"a":"example","cycle":"[Circular]"}',
         'result: { ok: true, total: 1, passed: 1, failed: 0 }',
       ],
       exitCode: 0
@@ -255,7 +256,8 @@ QUnit.module('qtap', function (hooks) {
       expected: [
         'client: running test/fixtures/uncaught-early.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-early.html:3',
+        'consoleerror: ReferenceError: bar is not defined',
+        'consoleerror:   at /test/fixtures/uncaught-early.html:3',
         'bail: End of fixture',
       ],
       exitCode: 1
@@ -266,7 +268,8 @@ QUnit.module('qtap', function (hooks) {
       expected: [
         'client: running test/fixtures/uncaught-mid.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-mid.html:5',
+        'consoleerror: ReferenceError: bar is not defined',
+        'consoleerror:   at /test/fixtures/uncaught-mid.html:5',
         'bail: End of fixture',
       ],
       exitCode: 1
@@ -287,7 +290,8 @@ QUnit.module('qtap', function (hooks) {
       expected: [
         'client: running test/fixtures/uncaught-custom.html',
         'online',
-        'consoleerror: Error: Boo\n  at /test/fixtures/uncaught-custom.html:3',
+        'consoleerror: Error: Boo',
+        'consoleerror:   at /test/fixtures/uncaught-custom.html:3',
         'bail: End of fixture',
       ],
       exitCode: 1
@@ -298,8 +302,10 @@ QUnit.module('qtap', function (hooks) {
       expected: [
         'client: running test/fixtures/uncaught-multiple.html',
         'online',
-        'consoleerror: ReferenceError: bar is not defined\n  at /test/fixtures/uncaught-multiple.html:3'
-          + '\nReferenceError: quux is not defined\n  at /test/fixtures/uncaught-multiple.html:6',
+        'consoleerror: ReferenceError: bar is not defined',
+        'consoleerror:   at /test/fixtures/uncaught-multiple.html:3',
+        'consoleerror: ReferenceError: quux is not defined',
+        'consoleerror:   at /test/fixtures/uncaught-multiple.html:6',
         'bail: End of fixture',
       ],
       exitCode: 1
