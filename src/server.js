@@ -76,9 +76,20 @@ class ControlServer {
 
     this.browsers = new Map();
     // Optimization: Prefetch test file in parallel with server creation and browser launching.
-    // Once browsers are running and they make their first HTTP request,
-    // we'll await this in handleRequest/getTestFile.
+    //
+    // To prevent a avoid global error (unhandledRejection),
+    // we add a no-op catch() handler here.
+    //
+    // Once launchBrowser is called, we will await this in handleRequest/getTestFile.
+    // The 'error' event will be emitted via the on('request') handler.
+    //
+    // The reason we don't emit 'error' here directly is that that would cause
+    // qtap.runWaitFor() to return, while in actuality stuff is still running
+    // in the background.
     this.testFilePromise = this.fetchTestFile(testFileAbsolute);
+    this.testFilePromise.catch(() => {
+      // No-op
+    });
 
     // Optimization: Don't wait for server to start. Let qtap.js proceed to load config/browsers,
     // and we'll await this later in launchBrowser().
@@ -183,9 +194,9 @@ class ControlServer {
           clientId,
           ok: finalResult.ok,
           total: finalResult.count,
-          // avoid `finalResult.todo` because it would double-count passing TODOs
+          // avoid `finalResult.todo` because it would double-count passing todos
           passed: finalResult.pass + finalResult.todos.length,
-          // avoid `finalResult.fail` because it includes TODOs (expected failure)
+          // avoid `finalResult.fail` because it includes todos (expected failure)
           failed: finalResult.failures.length,
           skips: finalResult.skips,
           todos: finalResult.todos,
@@ -290,7 +301,7 @@ class ControlServer {
     // NOTE: This is entirely cosmetic. For how it is fetched, see fetchTestFile().
     // For how resources are fetched client side, we ensure correctness via <base href>.
     //
-    // TODO: Add test case to validate this.
+    // TODO: Add test case to validate the URL resemblance to test file path.
     //
     // Example: WordPress password-strength-meter.js inspects the hostname and path name
     // (e.g. www.mysite.test/mysite/). The test case for defaults observes this.
@@ -351,7 +362,13 @@ class ControlServer {
       headInjectHtml = `<base href="${util.escapeHTML(this.testFile)}"/>` + headInjectHtml;
     }
 
-    let html = await this.testFilePromise;
+    let html;
+    try {
+      html = await this.testFilePromise;
+    } catch (e) {
+      // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
+      throw new Error('Could not open ' + this.testFile, { cause: e });
+    }
     this.logger.debug('testfile_ready', `Finished fetching ${this.testFile}`);
 
     // Head injection
@@ -460,7 +477,7 @@ class ControlServer {
   serveError (resp, statusCode, e) {
     if (!resp.headersSent) {
       resp.writeHead(statusCode, { 'Content-Type': util.MIME_TYPES.txt });
-      // @ts-ignore - Definition lacks Error.stack
+      // @ts-ignore - TypeScript @types/node lacks Error.stack
       resp.write((e.stack || String(e)) + '\n');
     }
     resp.end();

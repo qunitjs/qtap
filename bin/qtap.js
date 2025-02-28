@@ -72,7 +72,7 @@ if (opts.version) {
   program.help();
 } else {
   try {
-    const result = await qtap.runWaitFor(opts.browser, program.args, {
+    const result = await qtap.runWaitFor(program.args, opts.browser, {
       config: opts.config,
       idleTimeout: opts.timeout,
       connectTimeout: opts.connectTimeout,

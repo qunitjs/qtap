@@ -50,7 +50,72 @@ QUnit.module('qtap', function (hooks) {
     ControlServer.nextClientId = 1;
   });
 
-  QUnit.test.each('runWaitFor()', {
+  QUnit.test.each('runWaitFor() error handling', [
+    {
+      files: null,
+      options,
+      error: /Must pass one or more test files/,
+    },
+    {
+      files: [],
+      options,
+      error: /Must pass one or more test files/,
+    },
+    {
+      files: 'notfound.html',
+      browsers: null,
+      options,
+      error: /Must pass one or more browser names/,
+    },
+    {
+      files: 'notfound.html',
+      browsers: [],
+      options,
+      error: /Must pass one or more browser names/,
+    },
+    {
+      files: 'notfound.html',
+      browsers: 'unknown',
+      options,
+      error: /Unknown browser unknown/,
+    },
+    {
+      files: 'notfound.html',
+      browsers: 'fake',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js'
+      },
+      error: new Error('Could not open notfound.html'),
+    },
+    {
+      files: 'notfound.html',
+      browsers: 'maybe',
+      options: {
+        ...options,
+        config: 'test/config-notfound.js'
+      },
+      error: new Error('Could not open test/config-notfound.js'),
+    },
+    {
+      files: 'notfound.html',
+      browsers: 'maybe',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.error.js'
+      },
+      error: new Error('Loading test/fixtures/qtap.config.error.js failed: TypeError: Bad dong'),
+    }
+  ], async function (assert, params) {
+    assert.timeout(10_000);
+
+    await assert.rejects(
+      qtap.runWaitFor(params.files, params.browsers, params.options),
+      params.error
+    );
+  });
+
+  QUnit.test.each('runWaitFor() finish', {
     basic: {
       files: 'test/fixtures/fake_pass_4.txt',
       options: {
@@ -90,8 +155,8 @@ QUnit.module('qtap', function (hooks) {
     assert.timeout(40_000);
 
     const finish = await qtap.runWaitFor(
-      'fake',
       params.files,
+      'fake',
       params.options
     );
 
@@ -323,7 +388,7 @@ QUnit.module('qtap', function (hooks) {
   }, async function (assert, params) {
     assert.timeout(40_000);
 
-    const run = qtap.run('firefox', params.files, params.options);
+    const run = qtap.run(params.files, 'firefox', params.options);
     const events = debugReporter(run);
     const result = await new Promise((resolve, reject) => {
       run.on('finish', resolve);

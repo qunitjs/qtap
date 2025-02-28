@@ -94,15 +94,22 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  */
 
 /**
- * @param {string|string[]} browserNames One or more browser names, referring either
- *  to a built-in browser from QTap, or to a key in the optional `config.browsers` object.
  * @param {string|string[]} files Files and/or URLs.
+ * @param {string|string[]} [browserNames] One or more browser names, referring either
+ *  to a built-in browser from QTap, or (if you provide a config file via `runOptions.config`)
+    to a key in your `config.browsers` object.
  * @param {qtap.RunOptions} [runOptions]
  * @return {EventEmitter}
  */
-function run (browserNames, files, runOptions = {}) {
-  if (typeof browserNames === 'string') browserNames = [browserNames];
+function run (files, browserNames = 'detect', runOptions = {}) {
   if (typeof files === 'string') files = [files];
+  if (typeof browserNames === 'string') browserNames = [browserNames];
+  if (!files || !files.length) {
+    throw new Error('Must pass one or more test files to run');
+  }
+  if (!browserNames || !browserNames.length) {
+    throw new Error('Must pass one or more browser names or omit for the default');
+  }
   const options = {
     cwd: process.cwd(),
     idleTimeout: 5,
@@ -117,6 +124,7 @@ function run (browserNames, files, runOptions = {}) {
     options.verbose
   );
   const eventbus = new EventEmitter();
+  const globalController = new AbortController();
 
   if (options.reporter) {
     if (options.reporter in reporters) {
@@ -133,19 +141,26 @@ function run (browserNames, files, runOptions = {}) {
   }
 
   const runPromise = (async () => {
-    // TODO: Add test for config file not found
-    // TODO: Add test for config file with runtime errors
-    // TODO: Add test for relative config file without leading `./`, handled by process.resolve()
     let config;
     if (typeof options.config === 'string') {
       logger.debug('load_config', options.config);
-      // Support Windows: Unlike require(), import() also both file paths and URLs.
+      // Support Windows: Unlike require(), import() accepts both file paths and URLs.
       // Windows file paths are mistaken for URLs ("C:" is protocol-like), and must
       // thus be converted to file:// URLs first.
       const configFileUrl = url.pathToFileURL(path.resolve(options.cwd, options.config)).toString();
-      config = (await import(configFileUrl)).default;
+      try {
+        config = (await import(configFileUrl)).default;
+      } catch (err) {
+        /** @type {any} - TypeScript @types/node lacks Error.code */
+        const e = err;
+        if (e.code === 'ERR_MODULE_NOT_FOUND') {
+          // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
+          throw new Error('Could not open ' + options.config, { cause: e });
+        }
+        // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
+        throw new Error(`Loading ${options.config} failed: ${String(e)}`, { cause: e });
+      }
     }
-    const globalController = new AbortController();
     const globalSignal = globalController.signal;
 
     const browerPromises = [];
@@ -181,37 +196,37 @@ function run (browserNames, files, runOptions = {}) {
       finish.results[event.clientId] = event;
     });
 
-    try {
-      // Wait for all tests and browsers to finish/stop, regardless of errors thrown,
-      // to avoid dangling browser processes.
-      await Promise.allSettled(browerPromises);
+    // Wait for all tests and browsers to finish/stop, regardless of errors thrown,
+    // to avoid dangling browser processes.
+    await Promise.allSettled(browerPromises);
 
-      // Re-wait, this time letting the first of any errors bubble up.
-      for (const browerPromise of browerPromises) {
-        await browerPromise;
-      }
+    // Re-wait, this time letting the first of any errors bubble up.
+    for (const browerPromise of browerPromises) {
+      await browerPromise;
+    }
 
-      logger.debug('shared_cleanup', 'Invoke global signal to clean up shared resources');
-      globalController.abort();
-    } finally {
+    eventbus.emit('finish', finish);
+  })();
+  runPromise
+    .finally(() => {
       // Make sure we close our server even if the above throws, so that Node.js
       // may naturally exit (no open ports remaining)
       for (const server of servers) {
         server.close();
       }
-    }
 
-    eventbus.emit('finish', finish);
-  })();
-  runPromise.catch((error) => {
-    // Node.js automatically ensures users cannot forget to listen for the 'error' event.
-    // For this reason, runWaitFor() is a separate method, because that converts the
-    // 'error' event into a rejected Promise. If we created that Promise as part of run()
-    // like `return {eventbus, promise}`), then we loose this useful detection, because
-    // we'd have already listened for it. Plus, it causes an unhandledRejection error
-    // for those that only want the events and not the Promise.
-    eventbus.emit('error', error);
-  });
+      logger.debug('shared_cleanup', 'Invoke global signal to clean up shared resources');
+      globalController.abort();
+    })
+    .catch((error) => {
+      // Node.js automatically ensures users cannot forget to listen for the 'error' event.
+      // For this reason, runWaitFor() is a separate method, because that converts the
+      // 'error' event into a rejected Promise. If we created that Promise as part of run()
+      // like `return {eventbus, promise}`), then we loose this useful detection, because
+      // we'd have already listened for it. Plus, it causes an unhandledRejection error
+      // for those that only want the events and not the Promise.
+      eventbus.emit('error', error);
+    });
 
   return eventbus;
 }
@@ -220,14 +235,14 @@ function run (browserNames, files, runOptions = {}) {
  * Same as run() but can awaited.
  *
  * Use this if all you want is a boolean result and/or if you use the 'reporter'
- * option for any output/display. For detailed events, call run() instead.
+ * option for any output/display. For detailed real-time events, call run() instead.
  *
  * @return {Promise<{ok: boolean, exitCode: number}>}
  * - ok: true for success, false for failure.
  * - exitCode: 0 for success, 1 for failure.
  */
-async function runWaitFor (browserNames, files, options = {}) {
-  const eventbus = run(browserNames, files, options);
+async function runWaitFor (files, browserNames, options = {}) {
+  const eventbus = run(files, browserNames, options);
 
   const result = await new Promise((resolve, reject) => {
     eventbus.on('finish', resolve);
