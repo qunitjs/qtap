@@ -13,17 +13,20 @@ program
     file: 'One or more local HTML files or URLs'
   })
   .argument('[file...]')
-  .option('-b, --browser <name>',
-    'One or more browser names.\n'
-       + 'Available: firefox, chrome, chromium, edge, safari.',
-    (val, list) => {
-      if (list === optionBrowserDefault) {
+  .addOption(
+    program.createOption(
+      '-b, --browser <name>',
+      'One or more browser names.\n'
+         + 'Available: detect, firefox, chrome, chromium, edge, safari.'
+    )
+      .argParser((val, list) => {
+        if (list === optionBrowserDefault) {
         // https://github.com/tj/commander.js/issues/1641
-        return [val];
-      }
-      return list.concat(val);
-    },
-    optionBrowserDefault
+          return [val];
+        }
+        return list.concat(val);
+      })
+      .default(optionBrowserDefault, '"detect"')
   )
   .option('-c, --config <file>', 'Optional config file to define additional browsers.')
   .option('--timeout <number>',
