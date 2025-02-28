@@ -187,6 +187,16 @@ QUnit.module('qtap', function (hooks) {
       ],
       exitCode: 0
     },
+    qunitFail: {
+      files: 'test/fixtures/qunit-fail.html',
+      options,
+      expected: [
+        'client: running test/fixtures/qunit-fail.html',
+        'online',
+        'result: { ok: false, total: 4, passed: 3, failed: 1 }',
+      ],
+      exitCode: 1
+    },
     qunitNotests: {
       files: 'test/fixtures/qunit-notests.html',
       options,
@@ -197,15 +207,15 @@ QUnit.module('qtap', function (hooks) {
       ],
       exitCode: 1
     },
-    qunitFail: {
-      files: 'test/fixtures/qunit-fail.html',
+    qunitTodoSkip: {
+      files: 'test/fixtures/qunit-todo-skip.html',
       options,
       expected: [
-        'client: running test/fixtures/qunit-fail.html',
+        'client: running test/fixtures/qunit-todo-skip.html',
         'online',
-        'result: { ok: false, total: 4, passed: 3, failed: 1 }',
+        'result: { ok: true, total: 4, passed: 4, failed: 0 }',
       ],
-      exitCode: 1
+      exitCode: 0
     },
     skip: {
       files: 'test/fixtures/skip.html',

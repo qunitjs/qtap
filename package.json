@@ -34,7 +34,7 @@
     "eslint": "~8.57.1",
     "eslint-config-semistandard": "~17.0.0",
     "eslint-plugin-qunit": "^8.1.2",
-    "qunit": "2.24.0",
+    "qunit": "2.24.1",
     "semistandard": "~17.0.0",
     "typescript": "5.7.3"
   },

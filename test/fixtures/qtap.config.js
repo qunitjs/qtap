@@ -9,7 +9,7 @@ export default {
     fake: async function fake (url) {
       fake.displayName = 'FakeBrowser';
 
-      // Fetch page to signal that we're online, and to fetch fake results.
+      // Fetch page to indicate that we're online, and to fetch fake results.
       // We use the response for real to validate that `files` and `cwd` are
       // resolved and served correctly.
       const body = await (await fetch(url)).text();
