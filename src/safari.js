@@ -2,6 +2,10 @@ import which from 'which';
 import { LocalBrowser, CommandNotFoundError } from './util.js';
 /** @import { Logger } from './qtap.js' */
 
+async function delay (wait) {
+  await new Promise(resolve => setTimeout(resolve, wait));
+}
+
 async function findAvailablePort () {
   const net = await import('node:net');
   return new Promise((resolve, _reject) => {
@@ -14,10 +18,18 @@ async function findAvailablePort () {
   });
 }
 
-async function launchSafariDriver (safaridriverBin, globalSignal, logger) {
-  const port = await findAvailablePort();
-  LocalBrowser.spawn(safaridriverBin, ['-p', port], globalSignal, logger);
-  return port;
+async function launchSafariDriver (bin, port, signals, logger) {
+  try {
+    // Use the global signal here since the process may be shared by multiple instances
+    await LocalBrowser.spawn(bin, ['-p', port], { browser: signals.global }, logger);
+  } catch (e) {
+    // Flaky "Operation not permitted", https://github.com/flutter/engine/pull/48791
+    // Retry unless the first browser signal has timed out
+    if (String(e).includes('Operation not permitted') && !signals.browser.aborted) {
+      await delay(1000);
+      launchSafariDriver(bin, port, signals, logger);
+    }
+  }
 }
 
 /**
@@ -48,12 +60,15 @@ let sharedSafariDriverPort = null;
  */
 async function safari (url, signals, logger) {
   // Step 1: Start safaridriver
+  // There must be no await between until after the sharedSafariDriverPort assignment,
+  // as otherwise the port will not be shared by subsequent calls
   if (!sharedSafariDriverPort) {
     const safaridriverBin = process.env.SAFARIDRIVER_BIN || which.sync('safaridriver', { nothrow: true });
     if (process.platform !== 'darwin' || !safaridriverBin) {
       throw new CommandNotFoundError('Safari requires macOS and safaridriver');
     }
-    sharedSafariDriverPort = launchSafariDriver(safaridriverBin, signals.global, logger);
+    sharedSafariDriverPort = findAvailablePort();
+    launchSafariDriver(safaridriverBin, await sharedSafariDriverPort, signals, logger);
   } else {
     // This is not an optimization. Safari can only be claimed by one safaridriver.
     logger.debug('safaridriver_reuse', 'Use existing safaridriver process');
@@ -97,7 +112,7 @@ async function safari (url, signals, logger) {
         // Back off from 50ms upto 1.0s each attempt
         const wait = Math.min(i * 50, 1000);
         logger.debug('safaridriver_waiting', `Attempt #${i}: ${e.code || e.cause.code}. Try again in ${wait}ms.`);
-        await new Promise(resolve => setTimeout(resolve, wait));
+        await delay(wait);
         continue;
       }
       logger.warning('safaridriver_session_error', e);
