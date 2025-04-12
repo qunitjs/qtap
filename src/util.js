@@ -171,17 +171,26 @@ export const LocalBrowser = {
     logger.debug('tempdir_created', dir);
 
     signals.global.addEventListener('abort', () => {
-      // On Windows, after spawn() returns for a stopped firefox.exe, we sometimes can't delete
-      // a temporary file because it is somehow still in use (EBUSY). Perhaps a race condition,
-      // or an lagged background process?
+      // Support Windows, Node 20-23: Avoid ENOTEMPTY after spawn() returns for mwedge.exe
+      // It seems a background process continues to write files, thus turning emptied dirs
+      // back into non-empty dirs.
+      // > ENOTEMPTY: directory not empty
+      // > at Object.rmdirSync (node:fs)
+      // > at rimrafSync (node:internal/fs/rimraf)
+      // > at fs.rmSync (node:fs)
+      // This affects Node 20-23. Node 24 switches from rimraf/rmdirSync to native.
+      //
+      // Support Windows: Avoid EBUSY after spawn() returns for firefox.exe.
+      // We sometimes can't delete a temporary file because it is somehow still in use.
+      // Perhaps a race condition, or a lagged background process?
       // > BUSY: resource busy or locked,
-      // > unlink 'C:\Users\RUNNER~1\AppData\Local\Temp\qtap_EZ4IoO\bounce-tracking-protection.sqlite'
+      // > at unlink 'C:\Users\gh\AppData\Local\Temp\qtap_EZ\bounce-tracking-protection.sqlite'
       //
       // Workaround:
       // - Enable `maxRetries` in case we just need to wait a little bit
       // - use try-catch to ignore further errors, because it is not critical for test completion.
       try {
-        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+        fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5 });
         logger.debug('tempdir_removed', dir);
       } catch (e) {
         logger.warning('tempdir_rm_error', e);
