@@ -81,16 +81,15 @@ export function qtapClientHead () {
     var buffer = '';
     var isSending = false;
     function send () {
-      isSending = true;
-
       var body = buffer;
       buffer = '';
 
       var xhr = new XMLHttpRequest();
       xhr.onload = xhr.onerror = () => {
-        isSending = false;
         if (buffer) {
           send();
+        } else {
+          isSending = false;
         }
       };
       xhr.open('POST', url, true);

@@ -82,14 +82,14 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
 /**
  * @typedef {Object} qtap.RunOptions
  *  relative to. Ignored if testing from URLs.
+ * @property {string} [cwd=process.cwd()] Base directory to interpret test file paths
  * @property {qtap.Config|string} [config] Config object, or path to a qtap.config.js file.
  * Refer to API.md for how to define additional browsers.
  * @property {number} [idleTimeout=5] How long a browser may be quiet between results.
  * @property {number} [connectTimeout=60] How many seconds a browser may take to start up.
+ * @property {string} [reporter="none"]
  * @property {boolean} [debugMode=false]
  * @property {boolean} [verbose=false]
- * @property {string} [reporter="none"]
- * @property {string} [cwd=process.cwd()] Base directory to interpret test file paths
  * @property {Function} [printDebug=console.error]
  */
 
@@ -115,16 +115,13 @@ function run (files, browserNames = 'detect', runOptions = {}) {
     idleTimeout: 5,
     connectTimeout: 60,
     debugMode: false,
+    printDebug: console.error,
     ...runOptions
   };
   // If --cwd is set to an relative path, expand it for consistency.
   options.cwd = path.resolve(options.cwd);
 
-  const logger = makeLogger(
-    'qtap_main',
-    options.printDebug || console.error,
-    options.verbose
-  );
+  const logger = makeLogger('qtap_main', options.printDebug, options.verbose);
   const eventbus = new EventEmitter();
   const globalController = new AbortController();
 
@@ -147,8 +144,8 @@ function run (files, browserNames = 'detect', runOptions = {}) {
     if (typeof options.config === 'string') {
       logger.debug('load_config', options.config);
       // Support Windows: Unlike require(), import() accepts both file paths and URLs.
-      // Windows file paths are mistaken for URLs ("C:" is protocol-like), and must
-      // thus be converted to file:// URLs first.
+      // Windows file paths are mistaken for URLs ("C:" is protocol-like),
+      // and must therefore be converted to a file:// URL first.
       const configFileUrl = url.pathToFileURL(path.resolve(options.cwd, options.config)).toString();
       try {
         config = (await import(configFileUrl)).default;
@@ -202,7 +199,7 @@ function run (files, browserNames = 'detect', runOptions = {}) {
     // to avoid dangling browser processes.
     await Promise.allSettled(browerPromises);
 
-    // Re-wait, this time letting the first of any errors bubble up.
+    // Re-await, this time letting the first of any errors bubble up.
     for (const browerPromise of browerPromises) {
       await browerPromise;
     }

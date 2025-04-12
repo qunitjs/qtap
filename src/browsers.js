@@ -9,7 +9,7 @@ import { concatGenFn, CommandNotFoundError, LocalBrowser } from './util.js';
 /** @import { Logger, Browser } from './qtap.js' */
 
 // - use Set to remove duplicate values, because `PROGRAMFILES` and `ProgramW6432` are often
-//   both "C:\Program Files", which, we'd check three times otherwise.
+//   both "C:\Program Files", which, we'd otherwise check three times.
 // - it is important that this preserves order of precedence.
 // - use filter() to remove empty/unset environment variables.
 //
@@ -129,12 +129,12 @@ async function firefox (url, signals, logger, debugMode) {
   logger.debug('firefox_prefs_create', 'Creating temporary prefs.js file');
   fs.writeFileSync(path.join(profileDir, 'prefs.js'), createFirefoxPrefsJs({
     'app.update.disabledForTesting': true, // Disable auto-updates
+    'browser.EULA.override': true, // Blank start, disable extra tab
     'browser.bookmarks.max_backups': 0, // Optimization, via sitespeedio/browsertime
     'browser.bookmarks.restore_default_bookmarks': false, // Optimization
     'browser.cache.disk.capacity': 0, // Optimization: Avoid disk writes
     'browser.cache.disk.smart_size.enabled': false, // Optimization
     'browser.chrome.guess_favicon': false, // Optimization: Avoid likely 404 for unspecified favicon
-    'browser.EULA.override': true, // Blank start, disable extra tab
     'browser.pagethumbnails.capturing_disabled': true, // Optimization, via sitespeedio/browsertime
     'browser.search.region': 'US', // Optimization: Avoid internal geoip lookup
     'browser.sessionstore.enabled': false, // Optimization

@@ -22,10 +22,10 @@
  * --
  *
  * This is based on https://github.com/tapjs/tap-finished/tree/v0.0.3 with
- * the following modifications:
+ * the following modifications for QTap:
  *
  * - https://github.com/tapjs/tap-finished/pull/2
- *   Upgrade from tap-parser@5 to tap-parser@18, so that we don't pull in the
+ *   Upgrade from tap-parser@5 to tap-parser@18, so that QTap doesn't pull in the
  *   35 dependencies that tap-parser@5 carried to support old Node.js versions.
  */
 'use strict';

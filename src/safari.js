@@ -24,7 +24,7 @@ async function launchSafariDriver (bin, port, signals, logger) {
     await LocalBrowser.spawn(bin, ['-p', port], { browser: signals.global }, logger);
   } catch (e) {
     // Flaky "Operation not permitted", https://github.com/flutter/engine/pull/48791
-    // Retry unless the first browser signal has timed out
+    // Retry until the first browser's connect timed is reached
     if (String(e).includes('Operation not permitted') && !signals.browser.aborted) {
       await delay(1000);
       launchSafariDriver(bin, port, signals, logger);
@@ -60,7 +60,7 @@ let sharedSafariDriverPort = null;
  */
 async function safari (url, signals, logger) {
   // Step 1: Start safaridriver
-  // There must be no await between until after the sharedSafariDriverPort assignment,
+  // There must be no await before or in the sharedSafariDriverPort assignment,
   // as otherwise the port will not be shared by subsequent calls
   if (!sharedSafariDriverPort) {
     const safaridriverBin = process.env.SAFARIDRIVER_BIN || which.sync('safaridriver', { nothrow: true });

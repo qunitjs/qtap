@@ -77,15 +77,13 @@ class ControlServer {
     this.browsers = new Map();
     // Optimization: Prefetch test file in parallel with server creation and browser launching.
     //
-    // To prevent a avoid global error (unhandledRejection),
-    // we add a no-op catch() handler here.
+    // To prevent a global error (unhandledRejection), we add a no-op catch() handler here.
+    // Once launchBrowser is called, we will await this in handleRequest/getTestFile,
+    // which is then propertly caught by server.on('request') below, which emits it
+    // as 'error' event.
     //
-    // Once launchBrowser is called, we will await this in handleRequest/getTestFile.
-    // The 'error' event will be emitted via the on('request') handler.
-    //
-    // The reason we don't emit 'error' here directly is that that would cause
-    // qtap.runWaitFor() to return, while in actuality stuff is still running
-    // in the background.
+    // The reason we don't emit 'error' directly here, is that that would cause
+    // qtap.runWaitFor() to return too early, while stuff is still running in the background.
     this.testFilePromise = this.fetchTestFile(testFileAbsolute);
     this.testFilePromise.catch(() => {
       // No-op
@@ -142,7 +140,7 @@ class ControlServer {
 
   /** @return {Promise<string>} HTML */
   async fetchTestFile (file) {
-    // fetch() does not yet support file URLs (as of Node.js 21).
+    // fetch() does not support file URLs (as of writing, in Node.js 22).
     if (this.isURL(file)) {
       this.logger.debug('testfile_fetch', `Requesting a copy of ${file}`);
       const resp = await fetch(file);
@@ -175,7 +173,7 @@ class ControlServer {
      * Reasons to stop a browser, whichever comes first:
      * 1. tap-finished.
      * 2. tap-parser 'bailout' event (client knows it crashed).
-     * 3. timeout (client didn't start, lost connection, or unknowingly crashed).
+     * 3. timeout (client didn't connect, client idle and presumed lost, or a silent crashed).
      *
      * @param {string} messageCode
      * @param {string} [reason]
@@ -297,8 +295,8 @@ class ControlServer {
     // - For external URLs, match the URL path, including query params, so that these
     //   can be seen both server-side and client-side.
     //
-    // NOTE: This is entirely cosmetic. For how it is fetched, see fetchTestFile().
-    // For how resources are fetched client side, we ensure correctness via <base href>.
+    // NOTE: This is entirely cosmetic. For how the actual fetch, see fetchTestFile().
+    // For how resources are requested client side, we use <base href> to ensure correctness.
     //
     // TODO: Add test case to validate the URL resemblance to test file path.
     //
@@ -320,8 +318,8 @@ class ControlServer {
     try {
       logger.debug('browser_launch_call');
 
-      // Separate calling browserFn() from awaiting so that we can emit an event
-      // right after calling it (which may set Browser.displayName). If we awaited first,
+      // Separate "browserFn()" call from the "await", so that we can emit an event
+      // right after calling it (which may set Browser.displayName). If we awaited here,
       // then the event would be emitted after the client is done instead of when it starts.
       const browerPromise = browserFn(url, signals, logger, this.debugMode);
       this.eventbus.emit('client', {
@@ -332,10 +330,10 @@ class ControlServer {
       });
       await browerPromise;
 
-      // This stopBrowser() is most likely a no-op (e.g. if we received test results
-      // or some error, and we asked the browser to stop). Just in case the browser
-      // ended by itself, call it again here so that we can convey it as an error
-      // if it was still running from our POV.
+      // This particular stopBrowser() is most likely a no-op (e.g. we test results
+      // are complete, or there was an error, and we already asked the browser to stop).
+      // In case the browser ended by itself for some other reason, call it again here
+      // so that we can convey it as an error if we didn't ask it to stop.
       logger.debug('browser_launch_exit');
       stopBrowser('browser_launch_exit', 'Browser ended unexpectedly');
     } catch (e) {
@@ -353,11 +351,10 @@ class ControlServer {
 
     let headInjectHtml = `<script>(${fnToStr(qtapClientHead, qtapTapUrl)})();</script>`;
 
-    // and URL-based files can fetch their resources directly from the original server.
-    // * Prepend as early as possible. If the file has its own <base>, theirs will
-    //   come later and correctly "win" by applying last (after ours).
+    // Add <base> tag so that URL-based files can fetch their resources directly from the
+    // original server. Prepend as early as possible. If the file has its own <base>, theirs
+    // will be after ours and correctly "win" by applying last.
     if (this.isURL(this.testFile)) {
-      // especially if it was originally given as an absolute filesystem path
       headInjectHtml = `<base href="${util.escapeHTML(this.testFile)}"/>` + headInjectHtml;
     }
 
@@ -371,10 +368,12 @@ class ControlServer {
     this.logger.debug('testfile_ready', `Finished fetching ${this.testFile}`);
 
     // Head injection
-    // * Use a callback, to avoid accidental $1 substitutions via user input.
-    // * Insert no line breaks, to avoid changing line numbers.
+    // * Use a callback, to avoid corruption if "$1" appears in the user input.
+    // * The headInjectHtml string must be one line without any line breaks,
+    //   so that line numbers in stack traces presented in QTap output remain
+    //   transparent and correct.
     // * Ignore <heading> and <head-thing>.
-    // * Support <head x=y>, including with tab or newline.
+    // * Support <head x=y...>, including with tabs or newlines before ">".
     html = util.replaceOnce(html, [
       /<head(?:\s[^>]*)?>/i,
       /<html(?:\s[^>]*)?>/i,
@@ -446,8 +445,8 @@ class ControlServer {
       body += data;
     });
     req.on('end', () => {
-      // Support QUnit 2.x: Strip escape sequences for tap-parser compatibility.
-      // Fixed in QUnit 3.0 with https://github.com/qunitjs/qunit/pull/1801.
+      // Support QUnit 2.16 - 2.23: Strip escape sequences for tap-parser compatibility.
+      // Fixed in QUnit 2.23.1 with https://github.com/qunitjs/qunit/pull/1801.
       body = util.stripAsciEscapes(body);
       const bodyExcerpt = body.slice(0, 30) + '…';
       const clientId = url.searchParams.get('qtap_clientId');
