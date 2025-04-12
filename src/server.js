@@ -192,9 +192,9 @@ class ControlServer {
           clientId,
           ok: finalResult.ok,
           total: finalResult.count,
-          // avoid `finalResult.todo` because it would double-count passing todos
+          // avoid precomputed `finalResult.todo` because that would double-count passing todos
           passed: finalResult.pass + finalResult.todos.length,
-          // avoid `finalResult.fail` because it includes todos (expected failure)
+          // avoid precomputed `finalResult.fail` because that includes todos (expected failure)
           failed: finalResult.failures.length,
           skips: finalResult.skips,
           todos: finalResult.todos,
@@ -257,7 +257,7 @@ class ControlServer {
       tapParser,
       clientIdleActive: null,
       getDisplayName () {
-        return (browserFn.displayName || browserFn.name || 'Browser').slice(0, 50);
+        return (browserFn.displayName || browserFn.name || browserName || 'Browser').slice(0, 50);
       }
     };
     this.browsers.set(clientId, browser);

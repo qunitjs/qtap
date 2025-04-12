@@ -221,7 +221,7 @@ QUnit.module('qtap', function (hooks) {
     },
     connectTimeout: {
       files: 'test/fixtures/pass.html',
-      browsers: 'fake_slow',
+      browsers: 'fakeSlow',
       options: {
         ...options,
         config: 'test/fixtures/qtap.config.js',

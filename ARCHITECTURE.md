@@ -38,7 +38,7 @@ Examples:
 
 * We will directly depend on at most 5 npm packages. Requirements for dependencies:
 
-  * must solve a non-trivial problem, e.g. something that is not easily implemented in under 50 lines of code that we could write once ourselvers and then use long-term without changes.
+  * must solve a non-trivial problem, e.g. something that is not easily implemented in under 50 lines of code that we could write once ourselves and then use long-term without changes.
   * may not exceed 100KB in size (as measured by `https://registry.npmjs.org/PACKAGE/-/PACKAGE-VERSION.tgz`), and may carry at most 4 indirect or transitive dependencies in total.
   * must be audited and understood by us as if it were our own code, including each time before we upgrade the version we depend on.
   * may not be directly exposed to end-users (whether QTap CLI or QTap Node.js API), so that we could freely upgrade, replace, or remove it in a semver-minor release.
@@ -49,7 +49,7 @@ Performance is a first-class principle in QTap.
 
 The first priority (after the "Simple" and "Lean" values above) is time to first result. This means the CLI endpoint should as directly as possible start browsers and start the ControlServer. Any computation, imports and other overhead is deferred when possible.
 
-The second piority is time to last result (e.g. "Done!"), which is generally what a human in local development (especially in watch mode) will be waiting for. Note that this is separate from when the CLI process technically exits, which is less important to us. It is expected that the process will in practice exit immediately after the last result is printed, but when we have a choice, it is important to first get and communicate test results. In particular for watch mode, shutdown logic will not happen on re-runs and thus is avoided if we don't do it in the critical path toward obtaining test results.
+The second priority is time to last result (e.g. "Done!"), which is generally what a human in local development (especially in watch mode) will be waiting for. Note that this is separate from when the CLI process technically exits, which is less important to us. It is expected that the process will in practice exit immediately after the last result is printed, but when we have a choice, it is important to first get and communicate test results. In particular for watch mode, shutdown logic will not happen on re-runs and thus is avoided if we don't do it in the critical path toward obtaining test results.
 
 ## Debugging
 
@@ -74,7 +74,7 @@ Set `--verbose` in the QTap CLI to enable verbose debug logging.
     To avoid:
     - [Example 1](https://github.com/gruntjs/grunt-contrib-qunit/blob/v10.1.1/Gruntfile.js): This uses grunt-contrib-qunit, with node-connect and a hardcoded port. This made it easy to configure in Gruntfile.js, but also makes it likely to conflict with other projects the user may be working on locally.
     - [Example 2](https://github.com/qunitjs/qunit/blob/2.23.1/Gruntfile.js): This uses grunt-contrib-qunit, with node-connect and a configurable port. This allows the end-user to resolve a conflict by manually picking a different port. The user is however not likely to know or discover that this option exists, and is not likely to know what port to choose. The maintainer meanwhile has to come up with ad-hoc code to change the URLs. The `useAvailablePort` option of node-connect doesn't help since these two Grunt plugins are both configured declaratively, so while it could make node-connect use a good port, the other plugin wouldn't know about that ([workaround](https://github.com/qunitjs/qunit/commit/e77a763991a6330b68af5867cc5fccdb81edc7d0?w=1)).
-* Support applications that serve their own JS/CSS files, by letting them load source code, test suites, and the test HTML from their own URLs. This ensures you meaningfully test your source code witn the same bundler, and any generated or transformed files that your application would normally perform.
+* Support applications that serve their own JS/CSS files, by letting them load source code, test suites, and the test HTML from their own URLs. This ensures you meaningfully test your source code with the same bundler, and any generated or transformed files that your application would normally perform.
 
   Why:
   - This avoids maintenance costs from having to support two bundlers (the prod one, and whatever a test runner like QTap might prescribe).
@@ -84,11 +84,11 @@ Set `--verbose` in the QTap CLI to enable verbose debug logging.
 
 ### Considerations
 
-* Proxying every single request can add a noticable delay to large test suites. If possible, we want most requests to go directly to the specified URL.
+* Proxying every single request can add a noticeable delay to large test suites. If possible, we want most requests to go directly to the specified URL.
 * References to relative or absolute paths (e.g. `./foo` or `/foo` without a domain name) are likely to fail, because the browser would interpret them relative to where our proxy serves the file.
   To avoid:
   - Karma provided a way to [configure proxies](http://karma-runner.github.io/6.4/config/configuration-file.html#proxies) which would let you add custom paths like `/foo` to Karma's proxy server, and forward those to your application. I'd like this to placing this complexity on the end-user. Not by proxying things better or more automatically, but by not breaking these absolute references in the first place.
-  - Karma recommended against full transparent proxing (e.g. `/*`) as this would interfere with its own internal files and base directories. It'd be great to avoid imposing such limitation.
+  - Karma recommended against full transparent proxying (e.g. `/*`) as this would interfere with its own internal files and base directories. It'd be great to avoid imposing such limitation.
 * Invisible or non-portable HTML compromises easy debugging of your own code:
   - [Airtap](https://github.com/airtap/airtap) takes full control over the HTML by taking only a list of JS files. While generating the HTML automatically is valuable for large projects (e.g. support wildcards, avoid manually needing to list each JS file in the HTML), this makes debugging harder as you then need to work with your test runner to debug it (disable headless, disable shutdown after test completion, enable visual test reporter). While some projects invest in a high-quality debugging experience, it's always going to lag behind what the browser offers to "normal" web pages.
   - [Jest](https://jestjs.io/docs/api), and others that don't even run in a real browser by default, require you to hook up the Node.js/V8 inspector to Chrome to have a reasonable debugging experience. This is non-trivial for new developers, and comes with various limitations and confusing aspects that don't affect working with DevTools on regular web pages.
@@ -104,19 +104,19 @@ Set `--verbose` in the QTap CLI to enable verbose debug logging.
   Downside:
   - Gap in error telemetry between the browser and page starting to load, and potentially miss the first few test results, until your script is injected. Or, yield control over when the tests begin to the test runner.
   - Puppeteer offers a Chrome-only `Page.evaluateOnNewDocument` method which promises to run before other scripts, but, the standard WebDriver protocol has no such capability yet.
-  - For true cross-browser testing we'd want to incldue cloud browsers like BrowserStack and SauceLabs, where there are even fewer capabilities.
+  - For true cross-browser testing we'd want to include cloud browsers like BrowserStack and SauceLabs, where there are even fewer capabilities.
 
   **Page-side script injection**
 
   This means the end-user has to modify the page in some way. Or, the test runner introduces a mandatory proxy that modifies the page on-demand.
 
-  This has the benefit of requiring no control over the browser process. The only responsiblity of a browser launcher is to navigate to a single URL.
+  This has the benefit of requiring no control over the browser process. The only responsibility of a browser launcher is to navigate to a single URL.
 
 ### Approach taken
 
 * **HTML-first**. The HTML file is yours, and you can open and debug it directly in any browser, using familiar and fully capable devtools in that browser. If we generate it automatically from a one or more JavaScript file names (e.g. wildcards or glob patterns), then we'll save the file to the current working directory for transparency and ease of debugging.
 
-* **Minimal proxy**. The HTML file is served from an automatically started web server. References to relative and absolute paths work correctly, by using a `<base>` tag pointing back to the original URL. This means no proxies have to be configured by the user, no other requests have to be proxied by us, and thus no conflicts or abmiguities can arise between paths in end-user code, and paths for the test runner.
+* **Minimal proxy**. The HTML file is served from an automatically started web server. References to relative and absolute paths work correctly, by using a `<base>` tag pointing back to the original URL. This means no proxies have to be configured by the user, no other requests have to be proxied by us, and thus no conflicts or ambiguities can arise between paths in end-user code, and paths for the test runner.
 
   This means we need only 1 web server, which can both serve the HTML test file, and receive test results.
 
@@ -136,15 +136,15 @@ One of the passed parameters is a standard [`AbortSignal` object](https://develo
 
 ```js
 // Using our utility
-async function myBrowser (url, signal, logger) {
-  await LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger);
+async function mybrowser (url, signals, logger) {
+  await LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signals, logger);
 }
 
 // Minimal sub process
 import child_process from 'node:child_process';
-async function myBrowser (url, signal, logger) {
+async function mybrowser (url, signals, logger) {
   logger.debug('Spawning /bin/mybrowser');
-  const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
+  const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal: signals.browser });
   await new Promise((resolve, reject) => {
     spawned.on('error', (error) => reject(error));
     spawned.on('exit', () => reject(new Error('Process exited'));
@@ -152,13 +152,13 @@ async function myBrowser (url, signal, logger) {
 }
 
 // Minimal custom
-async function myBrowser (url, signal, logger) {
-  // * start browser and navigate to `url`
+async function mybrowser (url, signals, logger) {
+  // * start browser and navigate to `urll`
   // * if you encounter problems, throw
   await new Promise((resolve, reject) => {
     // * once browser has stopped, call resolve()
     // * if you encounter problems, call reject()
-    signal.addEventListener('abort', () => {
+    signals.browser.addEventListener('abort', () => {
       // stop browser
     });
   });
@@ -192,7 +192,7 @@ async function myBrowser (url, signal, logger) {
   }
   ```
 
-  This kind of inherence and declarative approach was not taken, as it makes ourselves a bottleneck for future expansion, and limits flexibilty. It may make some theoretical basic examples and demos look simpler, but then comes at a steep increase in complexity as soon as you need to step outside of that. And while the basic case may look simpler on-screen, it is harder to write from scratch, and harder to understand. It does not faccilitate learning  what happens underneath, what is required or why, in what order things are done, or what else is available. Nesting and long-term stability is difficult to ensure with stateful functions and inheritence.
+  This kind of inheritance and declarative approach was not taken, as it makes ourselves a bottleneck for future expansion, and limits flexibility. It may make some theoretical basic examples and demos look simpler, but then comes at a steep increase in complexity as soon as you need to step outside of that. And while the basic case may look simpler on-screen, it is harder to write from scratch, and harder to understand. It does not facilitate learning  what happens underneath, what is required or why, in what order things are done, or what else is available. Nesting and long-term stability is difficult to ensure with stateful functions and inheritance.
 
   We prefer composition of single-purpose utility functions, and placing the plugin author at a single entrypoint function from where they can translate their needs into a search for a method that does that (whether our utility, or something else).
 
@@ -203,7 +203,7 @@ async function myBrowser (url, signal, logger) {
 * **Single function with `stop` method**. The browser launch function would expose a `stop` method, as part of a returned object. This addresses most of the above.
 
   ```js
-  function myBrowser (url, logger) {
+  function mybrowser (url, logger) {
     // Native `child_process.spawn(command, [url])`
     // or use our utility:
     const sub = qtap.LocalBrowser.spawn(
@@ -219,11 +219,11 @@ async function myBrowser (url, signal, logger) {
     };
   ```
 
-  What remains unaddressed here is avoiding dangling processes in the case of errors between internal process spawning and the returning of the `stop` function. It places a high responsibility on downstream to catch any and all errors there. It also leave some abiguity over the meaning of uncaught errors and how to convey errors or unexpected subprocess exists, because the only chance we have to convey these above is when starting the browser. Once the browser has started, and our function has returned to expose the `stop`, we have no communication path.
+  What remains unaddressed here is avoiding dangling processes in the case of errors between internal process spawning and the returning of the `stop` function. It places a high responsibility on downstream to catch any and all errors there. It also leave some ambiguity over the meaning of uncaught errors and how to convey errors or unexpected sub-process exists, because the only chance we have to convey these above is when starting the browser. Once the browser has started, and our function has returned to expose the `stop`, we have no communication path.
 
   The next solution uses AbortSignal, which is created by QTap before the launch function is called, thus establishing a way to convey the "stop" signal from the very beginning, leaving no gap for uncertainty or ambiguity to exist in.
 
-* **Single async function with AbortSignal**. The browser is an async function that tracks the lifetime of the browser procoess, and is given an AbortSignal for stopping the process.
+* **Single async function with AbortSignal**. The browser is an async function that tracks the lifetime of the browser process, and is given an AbortSignal for stopping the process.
 
   This is what we ended up with, except it still made the launcher responsible for silencing expected errors/exits after receiving a stop signal. We moved this responsibility to QTap.
 
@@ -231,13 +231,13 @@ async function myBrowser (url, signal, logger) {
   // Using our utility
   import qtap from 'qtap';
 
-  async function myBrowser (url, signal, logger) {
+  async function mybrowser (url, signal, logger) {
     await qtap.LocalBrowser.spawn(['/bin/mybrowser'], ['-headless', url], signal, logger );
   }
 
   // Minimal sub process
   import child_process from 'node:child_process';
-  async function myBrowser (url, signal, logger) {
+  async function mybrowser (url, signal, logger) {
     const spawned = child_process.spawn('/bin/mybrowser', ['-headless', url], { signal });
     await new Promise((resolve, reject) => {
       spawned.on('error', (error) => reject(error));
@@ -250,7 +250,7 @@ async function myBrowser (url, signal, logger) {
 
   It might be appealing to pass a `clientId` argument to the browser launch function for future use cases.
 
-  The parameter was originally there in an early draft, for two use cases in the built-in local browsers:
+  The parameter was originally there in an early draft, for two use cases for local browsers:
 
   1. Give a descriptive prefix to temp directories. Even after adopting `fs.mkdtemp` to create unique temporary directories, we kept using the clientId as descriptive prefix (e.g. `/tmp/qtap_client42_ABCxYz`).
   2. Name the debug log channel.
@@ -259,19 +259,19 @@ async function myBrowser (url, signal, logger) {
   async function launch (clientId, url, signal, logger) {
     logger = logger.channel(`mybrowser_${clientId}`);
 
-    const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
+    const profileDir = fs.mkdirSync(path.join(os.tmpdir(), 'qtap_' + clientId + '_'));
     const args = ['-headless', '-profile', profileDir, url];
     await LocalBrowser.spawn(['/bin/mybrowser'], args, signal, logger);
   }
   ```
 
-  The logger was solved by a passing `logger` object that already has its channel pre-configured for each client.
+  The logger was solved by a passing `logger` object that already has a channel pre-configured for the current browser name and client.
 
-  The temporary directory was solved by simplifying the `fs.mkdtemp` call to not include a `clientId`. This is redundant because `fs.mkdtemp` generates a unique temporary name.
+  The temporary directory was solved by switching to `fs.mkdtemp`, which generates a unique temporary directory that is better (unique even when there are multiple qtap processes, and can easily be called multiple times if needed), and doesn't need a `clientId`.
 
-  While there is some marginal gain in debugging by having the clientId explicitly in the directory name, the name of this directly will end up associated with the clientId in the debug logs already. E.g. as part of the launch command, we log `[qtap_mybrowser_client44] Spawning /bin/mybrowser -profile /tmp/qtap_ABCxYz`. Plugin authors can additionally call `logger.debug()` when desired for other use cases.
+  While there is some marginal gain in debugging by having the clientId explicitly in the directory name, the name of this will already be associated with the clientId in debug logs. E.g. the spawn function logs `[qtap_mybrowser_client44] Spawning /bin/mybrowser -profile /tmp/qtap_ABCxYz`. Plugin authors can additionally call `logger.debug()`.
 
-  Removing the `clientId` parameter from the `qtap.Browser` interface avoids misuse of `clientId`. Read "[QTap Internal: Client ID](#qtap-internal-client-id)" to learn why this is likely. It forces plugin authors to ensure uniqueness by other means (e.g. use random available port, or use `mktemp` to generate new temporary directories instead of trying to name it yourself). Removing such potential footgun from the API also avoids developer-unfriendly "you're holding it wrong" arguments in the future.
+  Removing the `clientId` parameter from the `qtap.Browser` interface avoids misuse of `clientId`. Read "[QTap Internal: Client ID](#qtap-internal-client-id)" to learn why this is likely. It forces plugin authors to ensure uniqueness by other means (e.g. use random available port, or use `mktemp` to generate new temporary directories instead of trying to name it yourself). Removing such potential foot-gun from the API also avoids developer-unfriendly "you're holding it wrong" arguments in the future.
 
   To further encourage and make "the right thing" easy, we provide `qtap.LocalBrowser.makeTempDir`.
 
@@ -289,7 +289,7 @@ The clientId is only unique to a single qtap process and thus should not be used
 
 * When launching the internal web server, QTap finds a random available port. This port (not the clientId) is what makes the overall URL unique and safe to run concurrently with other processes.
 
-* When creating a temporary directory for the Firefox browser profile, we call our `LocalBrowser.mkTempDir` utility which uses [Node.js `fs.mkdtemp`](https://nodejs.org/docs/latest-v22.x/api/fs.html#fsmkdtempprefix-options-callback), which creates a new directory with a random name that didn't already exist. This is favoured over `os.tmpdir()` with a prefix like `"qtap" + clientId`, as that would conflict with with concurrent invocations, and any remnants of past invokations.
+* When creating a temporary directory for the Firefox browser profile, we call our `LocalBrowser.mkTempDir` utility which uses [Node.js `fs.mkdtemp`](https://nodejs.org/docs/latest-v22.x/api/fs.html#fsmkdtempprefix-options-callback), which creates a new directory with a random name that didn't already exist. This is favoured over `os.tmpdir()` with a prefix like `"qtap" + clientId`, as that would conflict with with concurrent invocations, and any remnants of past invocations.
 
 ## QTap API: Config file
 
