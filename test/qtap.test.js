@@ -50,36 +50,36 @@ QUnit.module('qtap', function (hooks) {
     ControlServer.nextClientId = 1;
   });
 
-  QUnit.test.each('runWaitFor() error handling', [
-    {
+  QUnit.test.each('runWaitFor() error handling', {
+    'file null': {
       files: null,
       options,
       error: /Must pass one or more test files/,
     },
-    {
+    'files empty array': {
       files: [],
       options,
       error: /Must pass one or more test files/,
     },
-    {
+    'browser null': {
       files: 'notfound.html',
       browsers: null,
       options,
       error: /Must pass one or more browser names/,
     },
-    {
+    'browser empty array': {
       files: 'notfound.html',
       browsers: [],
       options,
       error: /Must pass one or more browser names/,
     },
-    {
+    'browser unknown': {
       files: 'notfound.html',
       browsers: 'unknown',
       options,
       error: /Unknown browser unknown/,
     },
-    {
+    'file not found': {
       files: 'notfound.html',
       browsers: 'fake',
       options: {
@@ -88,7 +88,7 @@ QUnit.module('qtap', function (hooks) {
       },
       error: new Error('Could not open notfound.html'),
     },
-    {
+    'config not found': {
       files: 'notfound.html',
       browsers: 'maybe',
       options: {
@@ -97,7 +97,7 @@ QUnit.module('qtap', function (hooks) {
       },
       error: new Error('Could not open test/config-notfound.js'),
     },
-    {
+    'config error': {
       files: 'notfound.html',
       browsers: 'maybe',
       options: {
@@ -105,8 +105,8 @@ QUnit.module('qtap', function (hooks) {
         config: 'test/fixtures/qtap.config.error.js'
       },
       error: new Error('Loading test/fixtures/qtap.config.error.js failed: TypeError: Bad dong'),
-    }
-  ], async function (assert, params) {
+    },
+  }, async function (assert, params) {
     assert.timeout(10_000);
 
     await assert.rejects(
@@ -216,6 +216,20 @@ QUnit.module('qtap', function (hooks) {
         'client: running test/fixtures/bail.html',
         'online',
         'bail: Need more cowbell.',
+      ],
+      exitCode: 1
+    },
+    connectTimeout: {
+      files: 'test/fixtures/pass.html',
+      browsers: 'fake_slow',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js',
+        connectTimeout: 0.5
+      },
+      expected: [
+        'client: running test/fixtures/pass.html',
+        'bail: Browser did not start within 0.5s',
       ],
       exitCode: 1
     },
@@ -388,7 +402,7 @@ QUnit.module('qtap', function (hooks) {
   }, async function (assert, params) {
     assert.timeout(40_000);
 
-    const run = qtap.run(params.files, 'firefox', params.options);
+    const run = qtap.run(params.files, params.browsers || 'firefox', params.options);
     const events = debugReporter(run);
     const result = await new Promise((resolve, reject) => {
       run.on('finish', resolve);

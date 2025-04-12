@@ -268,7 +268,6 @@ class ControlServer {
     // in `handleTap()` or `tapParser.on('line')`. But that adds significant overhead from
     // Node.js/V8 natively allocating many timers when processing large batches of test results.
     // Instead, merely store performance.now() and check that periodically.
-    // TODO: Write test for --connect-timeout by using a no-op browser.
     const TIMEOUT_CHECK_MS = 100;
     const browserStart = performance.now();
     const qtapCheckTimeout = () => {

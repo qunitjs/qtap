@@ -28,11 +28,12 @@ export default {
       });
     },
 
-    async noop_false (url, signals) {
+    async fake_slow (url, signals) {
       await new Promise((resolve, reject) => {
         setTimeout(() => {
-          reject(new Error('Burp'));
+          reject(new Error('Still alive after 3s. connectTimeout not working?'));
         }, 3000);
+
         signals.browser.addEventListener('abort', () => {
           reject(new Error('Bye'));
         });

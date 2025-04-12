@@ -11,14 +11,16 @@ QUnit.module('structure', function () {
       .filter((name) => name.endsWith('.html'))
       .sort();
 
-    const expectedHtmlFiles = fs.readFileSync(path.join(__dirname, 'qtap.test.js'), 'utf8')
+    let expectedHtmlFiles = fs.readFileSync(path.join(__dirname, 'qtap.test.js'), 'utf8')
       .split('\n')
       .map((line) => line.replace(/^\s*files: 'test\/fixtures\/(.+\.html)',$|^.*$|/, '$1'))
       .filter(Boolean)
       .sort();
+    // Remove duplicates
+    expectedHtmlFiles = expectedHtmlFiles.filter((name, i) => expectedHtmlFiles.indexOf(name) === i);
 
-    // Each test case's fixture should exist.
-    // Each fixture should have a test case declaring the expected behavior.
+    // Each test case must use a fixture that exists.
+    // Each fixture must have a corresponding test case (or be removed).
     assert.deepEqual(actualFilesTested, expectedHtmlFiles, 'Only tested HTML files');
   });
 });
