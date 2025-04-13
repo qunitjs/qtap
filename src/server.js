@@ -6,7 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { fnToStr, qtapClientHead, qtapClientBody } from './client.js';
+import { qtapClientHead, qtapClientBody } from './client.cjs';
 import * as util from './util.js';
 import tapFinished from './tap-finished.js';
 /** @import events from 'node:events' */
@@ -349,7 +349,7 @@ class ControlServer {
     const proxyBase = await this.getProxyBase();
     const qtapTapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
 
-    let headInjectHtml = `<script>(${fnToStr(qtapClientHead, qtapTapUrl)})();</script>`;
+    let headInjectHtml = `<script>(${util.fnToStr(qtapClientHead, qtapTapUrl)})();</script>`;
 
     // Add <base> tag so that URL-based files can fetch their resources directly from the
     // original server. Prepend as early as possible. If the file has its own <base>, theirs
@@ -388,7 +388,7 @@ class ControlServer {
       /<\/html>(?![\s\S]*<\/html>)/i,
       /$/
     ],
-    (m) => '<script>(' + fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
+    (m) => '<script>(' + util.fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
     );
 
     return html;

@@ -34,5 +34,15 @@ export default [
     rules: {
       'object-property-newline': 'off',
     }
+  },
+  {
+    files: ['src/client.cjs'],
+    languageOptions: {
+      ecmaVersion: 5,
+      sourceType: 'commonjs'
+    },
+    rules: {
+      'no-var': 'off',
+    }
   }
 ];

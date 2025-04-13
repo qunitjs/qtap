@@ -1,20 +1,7 @@
-/* eslint-disable no-var -- Browser code */
-/* global QUnit */
 // @ts-nocheck
 
-export function fnToStr (fn, qtapTapUrl) {
-  return fn
-    .toString()
-    .replace(/\/\/.+$/gm, '')
-    .replace(/\n|^\s+/gm, ' ')
-    .replace(
-      /'{{QTAP_TAP_URL}}'/g,
-      JSON.stringify(qtapTapUrl)
-    );
-}
-
 // See ARCHITECTURE.md#qtap-internal-client-send
-export function qtapClientHead () {
+function qtapClientHead () {
   // Support QUnit 2.24+: Enable TAP reporter, declaratively.
   window.qunit_config_reporters_tap = true;
 
@@ -85,7 +72,7 @@ export function qtapClientHead () {
       buffer = '';
 
       var xhr = new XMLHttpRequest();
-      xhr.onload = xhr.onerror = () => {
+      xhr.onload = xhr.onerror = function () {
         if (buffer) {
           send();
         } else {
@@ -154,9 +141,15 @@ export function qtapClientHead () {
   });
 }
 
-export function qtapClientBody () {
+function qtapClientBody () {
+  /* global QUnit */
   // Support QUnit 2.16 - 2.23: Enable TAP reporter, procedurally.
   if (typeof QUnit !== 'undefined' && QUnit.reporters && QUnit.reporters.tap && (!QUnit.config.reporters || !QUnit.config.reporters.tap)) {
     QUnit.reporters.tap.init(QUnit);
   }
 }
+
+module.exports = {
+  qtapClientHead: qtapClientHead,
+  qtapClientBody: qtapClientBody
+};

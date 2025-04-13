@@ -48,6 +48,17 @@ export function stripAsciEscapes (text) {
   return text.replace(/\x1b\[[0-9]+m/g, '');
 }
 
+export function fnToStr (fn, qtapTapUrl) {
+  return fn
+    .toString()
+    .replace(/\/\/.+$/gm, '')
+    .replace(/\n|^\s+/gm, ' ')
+    .replace(
+      /'{{QTAP_TAP_URL}}'/g,
+      JSON.stringify(qtapTapUrl)
+    );
+}
+
 export function escapeHTML (text) {
   return text.replace(/['"<>&]/g, (s) => {
     switch (s) {
