@@ -111,7 +111,7 @@ async function safari (url, signals, logger) {
 
         // Back off from 50ms upto 1.0s each attempt
         const wait = Math.min(i * 50, 1000);
-        logger.debug('safaridriver_waiting', `Attempt #${i}: ${e.code || e.cause.code}. Try again in ${wait}ms.`);
+        logger.debug('safaridriver_waiting', `Attempt ${i}: ${e.code || e.cause.code}. Try again in ${wait}ms.`);
         await delay(wait);
         continue;
       }

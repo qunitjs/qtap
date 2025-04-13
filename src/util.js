@@ -87,6 +87,10 @@ export function replaceOnce (input, patterns, replacement) {
 
 export class CommandNotFoundError extends Error {}
 
+export class BrowserStopSignal extends Error {}
+
+export class BrowserConnectTimeout extends Error {}
+
 export const LocalBrowser = {
   /**
    * @param {string|Array<string|null>|Generator<string|null|undefined>} paths

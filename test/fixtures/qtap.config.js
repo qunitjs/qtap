@@ -1,7 +1,7 @@
 async function fake (url) {
   fake.displayName = 'FakeBrowser';
 
-  // Fetch page to indicate that we're online, and to fetch fake results.
+  // Fetch page to indicate that the client connected, and to fetch the fake results.
   // We use the response for real to validate that `files` and `cwd` are
   // resolved and served correctly.
   const body = await (await fetch(url)).text();
@@ -20,10 +20,10 @@ async function fake (url) {
   });
 }
 
-async function fakeSlow (url, signals) {
+async function fakeSlowFail (url, signals) {
   await new Promise((resolve, reject) => {
     setTimeout(() => {
-      reject(new Error('Still alive after 3s. connectTimeout not working?'));
+      reject('Still alive after 3s. connectTimeout not working?');
     }, 3000);
 
     signals.browser.addEventListener('abort', () => {
@@ -31,10 +31,33 @@ async function fakeSlow (url, signals) {
     });
   });
 }
+fakeSlowFail.allowRetries = false;
+
+async function fakeRefuse (_url, signals) {
+  await new Promise((resolve, reject) => {
+    signals.browser.addEventListener('abort', () => {
+      reject('I dare you, I double dare you. Do not try to restart me.');
+    });
+  });
+}
+fakeRefuse.allowRetries = false;
+
+const snoozedFiles = {};
+async function fakeLazy (url) {
+  const path = new URL(url).pathname;
+  snoozedFiles[path] ??= 0;
+  snoozedFiles[path]++;
+  if (snoozedFiles[path] < 3) {
+    throw 'Meh, I do not want to start. Ask me again later!';
+  }
+  return await fake(url);
+}
 
 export default {
   browsers: {
     fake,
-    fakeSlow,
+    fakeSlowFail,
+    fakeRefuse,
+    fakeLazy,
   }
 };

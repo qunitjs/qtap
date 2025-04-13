@@ -220,18 +220,47 @@ QUnit.module('qtap', function (hooks) {
       exitCode: 1
     },
     connectTimeout: {
-      files: 'test/fixtures/pass.html',
-      browsers: 'fakeSlow',
+      files: 'test/fixtures/fake_pass_4.txt',
+      browsers: 'fakeSlowFail',
       options: {
         ...options,
         config: 'test/fixtures/qtap.config.js',
         connectTimeout: 0.5
       },
       expected: [
-        'client: running test/fixtures/pass.html',
+        'client: running test/fixtures/fake_pass_4.txt',
         'bail: Browser did not start within 0.5s',
       ],
       exitCode: 1
+    },
+    connectFailWithoutRetry: {
+      files: 'test/fixtures/fake_pass_4.txt',
+      browsers: 'fakeRefuse',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js',
+        connectTimeout: 0.5
+      },
+      expected: [
+        'client: running test/fixtures/fake_pass_4.txt',
+        'bail: Browser did not start within 0.5s',
+      ],
+      exitCode: 1
+    },
+    connectAfterRetry: {
+      files: 'test/fixtures/fake_pass_4.txt',
+      browsers: 'fakeLazy',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js',
+        connectTimeout: 0.5
+      },
+      expected: [
+        'client: running test/fixtures/fake_pass_4.txt',
+        'online',
+        'result: { ok: true, total: 4, passed: 4, failed: 0 }',
+      ],
+      exitCode: 0
     },
     console: {
       files: 'test/fixtures/console.html',

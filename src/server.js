@@ -157,8 +157,85 @@ class ControlServer {
   async launchBrowser (browserFn, browserName, globalSignal) {
     const clientId = 'client_' + ControlServer.nextClientId++;
     const logger = this.logger.channel(`qtap_browser_${clientId}_${browserName}`);
-    let clientIdleTimer = null;
 
+    // Serve the a test file from URL that looks like the original path when possible.
+    //
+    // - For static files, serve it from a URL that matches were it would be among the
+    //   other static files (even though it is treated special).
+    //   "foo/bar" => "/foo/bar"
+    //   "/tmp/foo/bar" => "/tmp/foo/bar"
+    // - For external URLs, match the URL path, including query params, so that these
+    //   can be seen both server-side and client-side.
+    //
+    // NOTE: This is entirely cosmetic. For how the actual fetch, see fetchTestFile().
+    // For how resources are requested client side, we use <base href> to ensure correctness.
+    //
+    // TODO: Add test case to validate the URL resemblance to test file path.
+    //
+    // Example: WordPress password-strength-meter.js inspects the hostname and path name
+    // (e.g. www.mysite.test/mysite/). The test case for defaults observes this.
+    // https://github.com/WordPress/wordpress-develop/blob/6.7.1/tests/qunit/wp-admin/js/password-strength-meter.js#L100
+    let qtapUrlPath;
+    if (this.isURL(this.testFile)) {
+      const tmpUrl = new URL(this.testFile);
+      tmpUrl.searchParams.set('qtap_clientId', clientId);
+      qtapUrlPath = tmpUrl.pathname + tmpUrl.search;
+    } else {
+      qtapUrlPath = '/' + this.testFile + '?qtap_clientId=' + clientId;
+    }
+    const url = await this.getProxyBase() + qtapUrlPath;
+
+    const maxTries = browserFn.allowRetries === false ? 1 : 3;
+    let i = 1;
+    while (true) {
+      try {
+        // The 'client' event must be emitted:
+        // * ... early, so that reporters can indicate the browser is starting.
+        // * ... exactly once, regardless of retries.
+        // * ... with the correct display name from browserFn.displayName, which may be set
+        //       dynamically by browserFn() before any async logic, as used by "detect"
+        //       (to expand to the selected browser), and by the BrowserStack plugin
+        //       (to expand chrome_latest).
+        //
+        // Separate launchBrowserAttempt() and its browserFn() call from the "await" statement,
+        // so that we can emit the 'client' event right after calling browserFn.
+        // For this to work, launchBrowserAttempt() must have no async logic before calling browserFn.
+        // If we awaited here directly, the event would not be emitted until after the client has
+        // finished, which defeats its purpose for reporters.
+        const browserPromise = this.launchBrowserAttempt(browserFn, browserName, globalSignal, clientId, url, logger);
+
+        if (i === 1) {
+          this.eventbus.emit('client', {
+            clientId,
+            testFile: this.testFile,
+            browserName,
+            displayName: browserFn.getDisplayName(),
+          });
+        }
+
+        const result = await browserPromise;
+        this.eventbus.emit('result', result);
+        return;
+      } catch (e) {
+        // Do not retry for test-specific bail reasons, which are expected to be consistent,
+        // and unrelated to the browser.
+        // Only retry for uncaught errors from browserFn, and for BrowserConnectTimeout.
+        if (i >= maxTries || e instanceof util.BrowserStopSignal) {
+          if (e instanceof util.BrowserStopSignal || e instanceof util.BrowserConnectTimeout) {
+            this.eventbus.emit('bail', { clientId, reason: e.message });
+            return;
+          } else {
+            throw e;
+          }
+        }
+
+        i++;
+        logger.debug('browser_connect_retry', `Retrying, attempt ${i} of ${maxTries}`);
+      }
+    }
+  }
+
+  async launchBrowserAttempt (browserFn, browserName, globalSignal, clientId, url, logger) {
     const controller = new AbortController();
     let signal = controller.signal;
     if (this.debugMode) {
@@ -168,58 +245,61 @@ class ControlServer {
         logger.warning('browser_signal_debugging', 'Keeping browser open for debugging');
       });
     }
+    const signals = { browser: signal, global: globalSignal };
 
-    /**
-     * Reasons to stop a browser, whichever comes first:
-     * 1. tap-finished.
-     * 2. tap-parser 'bailout' event (client knows it crashed).
-     * 3. timeout (client didn't connect, client idle and presumed lost, or a silent crashed).
-     *
-     * @param {string} messageCode
-     * @param {string} [reason]
-     * @param {Object} [finalResult]
-     */
-    const stopBrowser = async (messageCode, reason = '', finalResult = null) => {
-      // Ignore any duplicate or late reasons to stop
-      if (!this.browsers.has(clientId)) return;
+    let clientIdleTimer;
 
-      clearTimeout(clientIdleTimer);
-      this.browsers.delete(clientId);
-      controller.abort(`QTap: ${messageCode}`);
+    const browser = {
+      logger,
+      clientIdleActive: null,
+      getDisplayName () {
+        return browserFn.getDisplayName();
+      },
+      /**
+       * Reasons to stop a browser, whichever comes first:
+       * 1. tap-finished (client has sent us the test results).
+       * 2. tap-parser 'bailout' event (client knows it crashed).
+       * 3. timeout (client didn't connect, client idle and presumed lost, or a silent crash).
+       *
+       * @param {any} reason
+       */
+      stop: async (reason) => {
+        if (!this.browsers.has(clientId)) {
+          // Ignore any duplicate or late reasons to stop
+          return;
+        }
 
-      if (finalResult) {
-        this.eventbus.emit('result', {
-          clientId,
-          ok: finalResult.ok,
-          total: finalResult.count,
-          // avoid precomputed `finalResult.todo` because that would double-count passing todos
-          passed: finalResult.pass + finalResult.todos.length,
-          // avoid precomputed `finalResult.fail` because that includes todos (expected failure)
-          failed: finalResult.failures.length,
-          skips: finalResult.skips,
-          todos: finalResult.todos,
-          failures: finalResult.failures,
-        });
-      } else {
-        this.eventbus.emit('bail', {
-          clientId,
-          reason,
-        });
+        clearTimeout(clientIdleTimer);
+        this.browsers.delete(clientId);
+        controller.abort(reason);
       }
     };
 
+    let result;
     const tapParser = tapFinished({ wait: 0 }, (finalResult) => {
-      logger.debug('browser_tap_finished', 'Test run finished, stopping browser', {
+      result = {
+        clientId,
         ok: finalResult.ok,
         total: finalResult.count,
+        // avoid precomputed `finalResult.todo` because that would double-count passing todos
+        passed: finalResult.pass + finalResult.todos.length,
+        // avoid precomputed `finalResult.fail` because that includes todos (expected failure)
         failed: finalResult.failures.length,
+        skips: finalResult.skips,
+        todos: finalResult.todos,
+        failures: finalResult.failures,
+      };
+      logger.debug('browser_tap_finished', 'Test run finished, stopping browser', {
+        ok: result.ok,
+        total: result.total,
+        failed: result.failed,
       });
-      stopBrowser('browser_tap_finished', '', finalResult);
+      browser.stop(new util.BrowserStopSignal('browser_tap_finished'));
     });
 
     tapParser.on('bailout', (reason) => {
-      logger.warning('browser_tap_bailout', `Test run bailed, stopping browser. Reason: ${reason}`);
-      stopBrowser('browser_tap_bailout', reason);
+      logger.warning('browser_tap_bailout', 'Test run bailed, stopping browser');
+      browser.stop(new util.BrowserStopSignal(reason));
     });
 
     tapParser.on('comment', (comment) => {
@@ -252,14 +332,7 @@ class ControlServer {
     // tapParser.once('fail', () => logger.debug('browser_tap_fail', 'Found one or more failing tests'));
     // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
 
-    const browser = {
-      logger,
-      tapParser,
-      clientIdleActive: null,
-      getDisplayName () {
-        return (browserFn.displayName || browserFn.name || browserName || 'Browser').slice(0, 50);
-      }
-    };
+    browser.tapParser = tapParser;
     this.browsers.set(clientId, browser);
 
     // Optimization: The naive approach would be to clearTimeout+setTimeout on every tap line,
@@ -271,14 +344,16 @@ class ControlServer {
     const qtapCheckTimeout = () => {
       if (!browser.clientIdleActive) {
         if ((performance.now() - browserStart) > (this.connectTimeout * 1000)) {
-          logger.warning('browser_connect_timeout', `Browser did not start within ${this.connectTimeout}s, stopping browser`);
-          stopBrowser('browser_connect_timeout', `Browser did not start within ${this.connectTimeout}s`);
+          const reason = `Browser did not start within ${this.connectTimeout}s`;
+          logger.warning('browser_connect_timeout', reason);
+          browser.stop(new util.BrowserConnectTimeout(reason));
           return;
         }
       } else {
         if ((performance.now() - browser.clientIdleActive) > (this.idleTimeout * 1000)) {
-          logger.warning('browser_idle_timeout', `Browser idle for ${this.idleTimeout}s, stopping browser`);
-          stopBrowser('browser_idle_timeout', `Browser idle for ${this.idleTimeout}s`);
+          const reason = `Browser idle for ${this.idleTimeout}s`;
+          logger.warning('browser_idle_timeout', reason);
+          browser.stop(new util.BrowserStopSignal(reason));
           return;
         }
       }
@@ -286,63 +361,32 @@ class ControlServer {
     };
     clientIdleTimer = setTimeout(qtapCheckTimeout, TIMEOUT_CHECK_MS);
 
-    // Serve the a test file from URL that looks like the original path when possible.
-    //
-    // - For static files, serve it from a URL that matches were it would be among the
-    //   other static files (even though it is treated special).
-    //   "foo/bar" => "/foo/bar"
-    //   "/tmp/foo/bar" => "/tmp/foo/bar"
-    // - For external URLs, match the URL path, including query params, so that these
-    //   can be seen both server-side and client-side.
-    //
-    // NOTE: This is entirely cosmetic. For how the actual fetch, see fetchTestFile().
-    // For how resources are requested client side, we use <base href> to ensure correctness.
-    //
-    // TODO: Add test case to validate the URL resemblance to test file path.
-    //
-    // Example: WordPress password-strength-meter.js inspects the hostname and path name
-    // (e.g. www.mysite.test/mysite/). The test case for defaults observes this.
-    // https://github.com/WordPress/wordpress-develop/blob/6.7.1/tests/qunit/wp-admin/js/password-strength-meter.js#L100
-    let qtapUrlPath;
-    if (this.isURL(this.testFile)) {
-      const tmpUrl = new URL(this.testFile);
-      tmpUrl.searchParams.set('qtap_clientId', clientId);
-      qtapUrlPath = tmpUrl.pathname + tmpUrl.search;
-    } else {
-      qtapUrlPath = '/' + this.testFile + '?qtap_clientId=' + clientId;
-    }
-
-    const url = await this.getProxyBase() + qtapUrlPath;
-    const signals = { browser: signal, global: globalSignal };
-
     try {
       logger.debug('browser_launch_call');
 
-      // Separate "browserFn()" call from the "await", so that we can emit an event
-      // right after calling it (which may set Browser.displayName). If we awaited here,
-      // then the event would be emitted after the client is done instead of when it starts.
-      const browerPromise = browserFn(url, signals, logger, this.debugMode);
-      this.eventbus.emit('client', {
-        clientId,
-        testFile: this.testFile,
-        browserName,
-        displayName: browser.getDisplayName(),
-      });
-      await browerPromise;
+      await browserFn(url, signals, logger, this.debugMode);
 
-      // This particular stopBrowser() is most likely a no-op (e.g. we test results
-      // are complete, or there was an error, and we already asked the browser to stop).
-      // In case the browser ended by itself for some other reason, call it again here
-      // so that we can convey it as an error if we didn't ask it to stop.
+      // Usually browserFn() will return because we asked via browser.stop(), e.g. tests finished,
+      // bailed, or timed out. In case the browser ended by itself, we call browser.stop() here,
+      // so that if we didn't called it before, this will report an error.
+      // Also, this ensures the signal can clean up any resources created by browserFn.
       logger.debug('browser_launch_exit');
-      stopBrowser('browser_launch_exit', 'Browser ended unexpectedly');
+      browser.stop(new util.BrowserStopSignal('Browser ended unexpectedly'));
     } catch (e) {
+      // Silence any errors from browserFn that happen after we called browser.stop().
       if (!signal.aborted) {
         logger.warning('browser_launch_error', e);
-        stopBrowser('browser_launch_error', 'Browser ended unexpectedly');
+        browser.stop(new util.BrowserStopSignal('Browser ended unexpectedly'));
         throw e;
       }
     }
+
+    if (!result && signal.reason) {
+      // Throw BrowserConnectTimeout for retry purposes.
+      throw signal.reason;
+    }
+
+    return result;
   }
 
   async getTestFile (clientId) {

@@ -21,6 +21,7 @@ export default [
       'no-throw-literal': 'off',
       'object-shorthand': 'off',
       'operator-linebreak': ['error', 'before'],
+      'prefer-promise-reject-errors': 'off',
     }
   },
   {

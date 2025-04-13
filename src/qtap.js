@@ -169,6 +169,7 @@ function run (files, browserNames = 'detect', runOptions = {}) {
       if (typeof browserFn !== 'function') {
         throw new Error('Unknown browser ' + browserName);
       }
+      browserFn.getDisplayName = () => browserFn.displayName || browserName;
       for (const server of servers) {
         // Each launchBrowser() returns a Promise that settles when the browser exits.
         // Launch concurrently, and await afterwards.
