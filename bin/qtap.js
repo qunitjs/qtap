@@ -60,7 +60,7 @@ program
   )
   .option('-r, --reporter <reporter>', 'One of "minimal", "dynamic", or "none".', 'minimal')
   .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
-  .option('-d, --debug', 'Enable debug mode (non-headless browser, and verbose logging).')
+  .option('-d, --debug', 'Enable debug mode (non-headless browser).')
   .option('-v, --verbose', 'Enable verbose logging.')
   .option('-V, --version', 'Display version number.')
   .helpOption('-h, --help', 'Display this usage information.')
@@ -85,7 +85,7 @@ if (opts.version) {
       connectTimeout: opts.connectTimeout,
       reporter: opts.reporter,
       debugMode: opts.debug || (process.env.QTAP_DEBUG === '1'),
-      verbose: opts.debug || opts.verbose,
+      verbose: opts.verbose,
     });
     process.exit(result.exitCode);
   } catch (e) {

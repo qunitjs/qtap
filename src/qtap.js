@@ -18,11 +18,11 @@ import { ControlServer } from './server.js';
 
 /**
  * @param {string} defaultChannel
- * @param {Function} printDebug
+ * @param {Function} printVerbose
  * @param {boolean} [verbose]
  * @return {Logger}
  */
-function makeLogger (defaultChannel, printDebug, verbose = false) {
+function makeLogger (defaultChannel, printVerbose, verbose = false) {
   // Characters to avoid to ensure easy single lines of CLI debug output
   // * x00-1F: e.g. NULL, backspace (\b), line breaks (\r\n), ESC,
   //   ASNI escape codes (terminal colors).
@@ -51,12 +51,12 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
       debug: !verbose
         ? function () {}
         : function debug (messageCode, ...params) {
-          printDebug(util.styleText('grey', `[${prefix}] ${util.styleText('bold', messageCode)} ${paramsFmt(params)}`));
+          printVerbose(util.styleText('grey', `[${prefix}] ${util.styleText('bold', messageCode)} ${paramsFmt(params)}`));
         },
       warning: !verbose
         ? function () {}
         : function warning (messageCode, ...params) {
-          printDebug(util.styleText('yellow', `[${prefix}] WARNING ${util.styleText('bold', messageCode)}`) + ` ${paramsFmt(params)}`);
+          printVerbose(util.styleText('yellow', `[${prefix}] WARNING ${util.styleText('bold', messageCode)}`) + ` ${paramsFmt(params)}`);
         }
     };
   }
@@ -90,7 +90,7 @@ function makeLogger (defaultChannel, printDebug, verbose = false) {
  * @property {string} [reporter="none"]
  * @property {boolean} [debugMode=false]
  * @property {boolean} [verbose=false]
- * @property {Function} [printDebug=console.error]
+ * @property {Function} [printVerbose=console.error]
  */
 
 /**
@@ -115,13 +115,13 @@ function run (files, browserNames = 'detect', runOptions = {}) {
     idleTimeout: 5,
     connectTimeout: 60,
     debugMode: false,
-    printDebug: console.error,
+    printVerbose: console.error,
     ...runOptions
   };
   // If --cwd is set to an relative path, expand it for consistency.
   options.cwd = path.resolve(options.cwd);
 
-  const logger = makeLogger('qtap_main', options.printDebug, options.verbose);
+  const logger = makeLogger('qtap_main', options.printVerbose, options.verbose);
   const eventbus = new EventEmitter();
   const globalController = new AbortController();
 

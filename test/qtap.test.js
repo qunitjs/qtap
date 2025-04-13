@@ -13,7 +13,7 @@ const options = {
   idleTimeout: 30,
   verbose: !!process.env.CI,
   // verbose: true, // debugging
-  printDebug: (str) => { console.error('# ' + str); }
+  printVerbose: (str) => { console.error('# ' + str); }
 };
 
 function debugReporter (eventbus) {
