@@ -8,7 +8,13 @@ QTap is built to be simple, lean, and fast; valued and prioritised in that order
 
 ### Simple
 
-We value simplicity in installing and using QTap. This covers the CLI, the public Node.js API (module export), printed output, the overall npm package, and any of concepts required to understand these.
+We value simplicity in installing and using QTap. This covers the CLI, the public Node.js API (module export), printed output, the overall npm package, and any concepts required to understand these. Importantly, it applies not just to the day 1 experience when everything is going right, but also to day 1000 when something goes wrong on a Friday night, and you're debugging a mysterious bug while offline at 30,000 ft.
+
+We strive for a level of simplicity that naturally brings ease-of-use, rather than making an internally complex tool with an "easy" layer on the outside. See also _Simple Made Easy_ (2011) by Rich Harris ([cliff notes](https://paulrcook.com/blog/simple-made-easy), [original talk and slides](https://www.infoq.com/presentations/Simple-Made-Easy/))
+
+We favour a single way of doing something that works everywhere, over marginal gains that would introduce layers of indirection, abstraction, conditional branches, or additional dependencies. We believe this significantly increases the stability of our code, and reduces the number of possible variants that exist (and thus tests needed), and increasing the value of our tests. When there are fewer permutations of how code may run, there are fewer ways a bug may hide. If it works once, it should work always. We believe this also decreases the likelihood that a change in the user's environment may cause our tool to stop working, which may otherwise warrant frequent updates and releases just to keep QTap working.
+
+We favour an explicit and efficient inline implementation (e.g. in the form of a single well-documented function with a clear purpose, which may be relatively long, but is readable and linear), over many local functions that are weaved together. We believe this makes the code easy to contribute to, and, when a bug does slip in, quick to debug and get you back on track.
 
 Examples:
 
@@ -18,13 +24,29 @@ Examples:
   qtap test.html
   ```
 
-  This argument relates directly to a concept we know the user naturally knows and is most concerned about (their test file). There are no other unnamed arguments. There are no required options or flags. The default browser is selected automatically. No awareness of test framework is required (in most cases).
+  This one argument relates directly to a concept we know the user is familiar with (their test file). There are no other unnamed arguments, and no required options or flags. The default browser is selected automatically. No awareness of test framework is required in most cases.
 
   When invoking `qtap` without arguments out of curiosity, we generate not just an error message but also the `--help` usage documentation.
 
-* We favour a single way of doing something that works everywhere, over marginal gains that would introduce layers of indirection, abstraction, conditional branches, or additional dependencies.
+* QTap builds on the universal [Test Anything Protocol](https://testanything.org/).
 
-* We favour an explicit and efficient inline implementation (e.g. in the form of a single well-documented function with a clear purpose, which may be relatively long, but is readable and linear), over many local functions that are weaved together.
+  QTAP works out-of-the-box with QUnit, Mocha, and Jasmine.
+
+  But, it's important to understand that this isn't because we ship built-in support for these specifically. Doing so would have likely have limited the versions we support, which in turn imposes an update churn for the end-user. It would also subtly alter how your code and test framework behave, which the user doesn't know about until things fail, at which point the illusion of "just works" quickly fades away. It would also incur extra maintenance and support issues for us.
+
+  Instead, we build on the framework-agnostic TAP protocol. The user is responsible for setting up this one thing (unless it's the default, like in QUnit and Tape), and after that everything truly just works. It works transparantly with nothing sent to QTap that you can't also see in the browser console. There are no surprise side-channels or secret ingredients.
+
+  See also the [Unix philosophy](https://en.wikipedia.org/wiki/Unix_philosophy).
+
+* QTap does not modify your code, and does not limit your debugging capabilities.
+
+  No bundler or transpiler is applied to your code. The code you supply is the code we run. Yes, that means if you write code in TypeScript, or use future JavaScript syntax (via Babel, SWC, etc.), you will have to run your build first (or keep your build step in watch mode in a separate terminal tab).
+
+  We believe this is ultimately a good thing, because this is something your project will be familiar with regardless, since you would already need this for outside your tests (e.g. when publishing or deploying your code).
+
+  By choosing not to "own" this space, we encourage you to test your real code or real bundle. If we provided our own way to bundle or compile your code for you, it would likely differ in subtle ways from your published application. It would also be another thing for you to learn and setup, and another thing to debug when it inevitably breaks or limits you in some unforeseen way. Even when it works, it may cause your tests to become dependent on the test runner to work (i.e. cannot be debugged standalone), and may obscure bugs (i.e. your build settings may be out of sync, or have something extra in your test build that makes your code pass your tests, when it actually fails outside your tests).
+
+  See [§ QTap Internal: Server](#qtap-internal-server) for how this is implemented.
 
 ### Lean
 
@@ -32,14 +54,16 @@ We value low barriers and low costs for installing, using, contributing to, and 
 
 Examples:
 
-* We prefer to write code once in a way that is long-term stable (low maintenance cost), feasible to understand by inexperienced contributors, and thus affordable to audit by secure or sensitive projects that audit their upstream sources. For this and other reasons, we only use dependencies that are similarly small and auditable.
+* We prefer to write code once in a way that is long-term stable (low maintenance cost), feasible to understand by inexperienced contributors, and thus affordable to audit by secure or sensitive projects that [audit their upstream sources](https://timotijhof.net/posts/2023/wikimedia-balances-security-and-openness/). For this and other reasons, we only use dependencies that are similarly small and auditable.
 
-* We maintain a small bundle size that is fast to download, and quick and easy to install. This includes ensuring our dependencies do not restrict or complicate installation or runtime portability in the form OS constrains or other environment requirements.
+* We maintain a small bundle size that is fast to download, and quick and simple to install. This includes ensuring our dependencies do not restrict or complicate installation or runtime portability in the form OS constrains or other environment requirements.
 
-* We will directly depend on at most 5 npm packages. Requirements for dependencies:
+* We will directly depend on at most 5 npm packages. And these packages, plus any transient dependencies, may total to at most 256 KiB in download size (as measured by `https://registry.npmjs.org/PACKAGE/-/PACKAGE-VERSION.tgz`, and enforced by `structure.test.js`).
+
+  Requirements for dependencies:
 
   * must solve a non-trivial problem, e.g. something that is not easily implemented in under 50 lines of code that we could write once ourselves and then use long-term without changes.
-  * may not exceed 100KB in size (as measured by `https://registry.npmjs.org/PACKAGE/-/PACKAGE-VERSION.tgz`), and may carry at most 4 indirect or transitive dependencies in total.
+  * may may carry at most 4 indirect or transitive dependencies.
   * must be audited and understood by us as if it were our own code, including each time before we upgrade the version we depend on.
   * may not be directly exposed to end-users (whether QTap CLI or QTap Node.js API), so that we could freely upgrade, replace, or remove it in a semver-minor release.
 
@@ -49,7 +73,7 @@ Performance is a first-class principle in QTap.
 
 The first priority (after the "Simple" and "Lean" values above) is time to first result. This means the CLI endpoint should as directly as possible start browsers and start the ControlServer. Any computation, imports and other overhead is deferred when possible.
 
-The second priority is time to last result (e.g. "Done!"), which is generally what a human in local development (especially in watch mode) will be waiting for. Note that this is separate from when the CLI process technically exits, which is less important to us. It is expected that the process will in practice exit immediately after the last result is printed, but when we have a choice, it is important to first get and communicate test results. In particular for watch mode, shutdown logic will not happen on re-runs and thus is avoided if we don't do it in the critical path toward obtaining test results.
+The second priority is time to last result (e.g. "Done!"), which is generally what a human in local development (especially in watch mode) will be waiting for. Note that this is separate from when the CLI process technically exits, which is less important to us. It is expected that the process will in practice exit immediately after the last result is printed, but when we have a choice, it is important to first get and communicate test results. In particular for watch mode, any clean up and tear down logic may be unneeded between re-runs and thus is avoided if we don't do it in the critical path toward obtaining test results.
 
 ## Debugging
 
@@ -74,23 +98,24 @@ Set `--verbose` in the QTap CLI to enable verbose debug logging.
     To avoid:
     - [Example 1](https://github.com/gruntjs/grunt-contrib-qunit/blob/v10.1.1/Gruntfile.js): This uses grunt-contrib-qunit, with node-connect and a hardcoded port. This made it easy to configure in Gruntfile.js, but also makes it likely to conflict with other projects the user may be working on locally.
     - [Example 2](https://github.com/qunitjs/qunit/blob/2.23.1/Gruntfile.js): This uses grunt-contrib-qunit, with node-connect and a configurable port. This allows the end-user to resolve a conflict by manually picking a different port. The user is however not likely to know or discover that this option exists, and is not likely to know what port to choose. The maintainer meanwhile has to come up with ad-hoc code to change the URLs. The `useAvailablePort` option of node-connect doesn't help since these two Grunt plugins are both configured declaratively, so while it could make node-connect use a good port, the other plugin wouldn't know about that ([workaround](https://github.com/qunitjs/qunit/commit/e77a763991a6330b68af5867cc5fccdb81edc7d0?w=1)).
+
 * Support applications that serve their own JS/CSS files, by letting them load source code, test suites, and the test HTML from their own URLs. This ensures you meaningfully test your source code with the same bundler, and any generated or transformed files that your application would normally perform.
 
   Why:
   - This avoids maintenance costs from having to support two bundlers (the prod one, and whatever a test runner like QTap might prescribe).
   - This avoids bugs or false positives from something that works with your test bundler, but might fail or behave differently in your production setup. E.g. missing dependencies, different compiler/transpiler settings.
   - This avoids needless mocking of files that may be auto-generated.
-  - This allows web applications to provide automatic discovery of test suites, for both their own components, and for any plugins. For example, MediaWiki allows extensions to register test suites. When running [MediaWiki's QUnit page](https://www.mediawiki.org/wiki/Manual:JavaScript_unit_testing) in CI, MediaWiki will include tests from any extensions that are installed on that site as well. WordPress and Drupal could do something similar. Likewise, Node.js web apps that lazily bundle or transform JavaScript code may also want to make use of this.
+  - This allows web applications to provide automatic discovery of test suites, for both their own components, and for any plugins. For example, MediaWiki allows extensions to register test suites. When running [MediaWiki's QUnit page](https://www.mediawiki.org/wiki/Manual:JavaScript_unit_testing) in CI, MediaWiki will include tests from any extensions that are installed on that site as well. WordPress and Drupal could do something similar. Likewise, Node.js web apps that serve JavaScript code other than from static files may also want to make use of this (e.g. dynamic transformations, generated code, or on-the-fly bundling).
 
 ### Considerations
 
 * Proxying every single request can add a noticeable delay to large test suites. If possible, we want most requests to go directly to the specified URL.
 * References to relative or absolute paths (e.g. `./foo` or `/foo` without a domain name) are likely to fail, because the browser would interpret them relative to where our proxy serves the file.
   To avoid:
-  - Karma provided a way to [configure proxies](http://karma-runner.github.io/6.4/config/configuration-file.html#proxies) which would let you add custom paths like `/foo` to Karma's proxy server, and forward those to your application. I'd like this to placing this complexity on the end-user. Not by proxying things better or more automatically, but by not breaking these absolute references in the first place.
+  - Karma provided a way to [configure proxies](http://karma-runner.github.io/6.4/config/configuration-file.html#proxies) which would let you add custom paths like `/foo` to Karma's proxy server, and forward those to your application. I'd like to avoid placing this complexity on the end-user. Instead of proxying things "better" or more automatically, we can choose to not break these absolute references in the first place.
   - Karma recommended against full transparent proxying (e.g. `/*`) as this would interfere with its own internal files and base directories. It'd be great to avoid imposing such limitation.
-* Invisible or non-portable HTML compromises easy debugging of your own code:
-  - [Airtap](https://github.com/airtap/airtap) takes full control over the HTML by taking only a list of JS files. While generating the HTML automatically is valuable for large projects (e.g. support wildcards, avoid manually needing to list each JS file in the HTML), this makes debugging harder as you then need to work with your test runner to debug it (disable headless, disable shutdown after test completion, enable visual test reporter). While some projects invest in a high-quality debugging experience, it's always going to lag behind what the browser offers to "normal" web pages.
+* Invisible or non-portable HTML compromises ease of debugging for your own code:
+  - [Airtap](https://github.com/airtap/airtap) takes full control over the HTML by taking only a list of JS files. While generating the HTML automatically is valuable for large projects (e.g. support wildcards, avoid manually needing to list each JS file in the HTML), this makes debugging harder as you then need to work with your test runner to debug your tests (launch browser of choice, disable headless, prevent closing after test completion, enable visual test reporter). While some projects do invest in a high-quality debugging experience, it is unlikely to beat the devtools that browsers naturally offer to "normal" web pages.
   - [Jest](https://jestjs.io/docs/api), and others that don't even run in a real browser by default, require you to hook up the Node.js/V8 inspector to Chrome to have a reasonable debugging experience. This is non-trivial for new developers, and comes with various limitations and confusing aspects that don't affect working with DevTools on regular web pages.
   - Karma offers [configurable customDebugFile](http://karma-runner.github.io/6.4/config/configuration-file.html#customdebugfile) to let you customize (most) of the generated HTML. This is great, but comes at the cost of learning a new template file, and an extra thing to setup and maintain.
   - [Testem](https://github.com/testem/testem/) takes an HTML-first approach, but does come with two restrictions: You have to include `<script src="/testem.js"></script>` and call `Testem.hookIntoTestFramework();`. These make the HTML file no longer work well on their own (unless you modify the snippet in undocumented ways to make these inclusions conditional and/or fail gracefully). The benefit is of course that the HTML is very transparent and inspectable (no difficult to debug magic or secret sauce).

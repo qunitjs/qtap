@@ -60,7 +60,8 @@ program
   )
   .option('-r, --reporter <reporter>', 'One of "minimal", "dynamic", or "none".', 'minimal')
   .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
-  .option('-d, --debug', 'Enable debug mode (non-headless browser).')
+  .option('-d, --debug', 'Enable debug mode. This keeps the browser open,\n'
+      + 'and for local browsers it will launch visibly instead of headless.')
   .option('-v, --verbose', 'Enable verbose logging.')
   .option('-V, --version', 'Display version number.')
   .helpOption('-h, --help', 'Display this usage information.')

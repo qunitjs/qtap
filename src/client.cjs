@@ -139,6 +139,8 @@ function qtapClientHead () {
     }
     writeConsoleError(str);
   });
+
+  // TODO: Add window.addEventListener('unhandledrejection')
 }
 
 function qtapClientBody () {
