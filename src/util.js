@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+/** @import { Logger } from './qtap.js' */
+
 export const MIME_TYPES = {
   bin: 'application/octet-stream',
   css: 'text/css; charset=utf-8',
@@ -109,6 +111,7 @@ export const LocalBrowser = {
    * @param {Array<string>} args List of string arguments, passed to child_process.spawn()
    *  which will automatically quote and escape these.
    * @param {Object<string,AbortSignal>} signals
+   * @param {Logger} logger
    * @return {Promise<void>}
    */
   async spawn (paths, args, signals, logger) {
@@ -154,14 +157,12 @@ export const LocalBrowser = {
       spawned.on('exit', (code, sig) => {
         const indent = (str) => str.trim().split('\n').map(line => '    ' + line).join('\n');
         if (!code) {
-          logger.debug('browser_spawn_exit', `Process exited with code ${code}`);
           resolve();
         } else {
           const details = `Process exited with code ${code}`
             + (sig ? `\n  signal: ${sig}` : '')
             + (stderr ? `\n  stderr:\n${indent(stderr)}` : '')
             + (stdout ? `\n  stdout:\n${indent(stdout)}` : '');
-          logger.debug('browser_spawn_exit', details);
           reject(new Error(details));
         }
       });

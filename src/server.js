@@ -185,7 +185,7 @@ class ControlServer {
     }
     const url = await this.getProxyBase() + qtapUrlPath;
 
-    const maxTries = browserFn.allowRetries === false ? 1 : 3;
+    const maxTries = (browserFn.allowRetries === false || this.debugMode) ? 1 : 3;
     let i = 1;
     while (true) {
       try {
@@ -237,15 +237,14 @@ class ControlServer {
 
   async launchBrowserAttempt (browserFn, browserName, globalSignal, clientId, url, logger) {
     const controller = new AbortController();
-    let signal = controller.signal;
+    const signals = { browser: controller.signal, global: globalSignal };
     if (this.debugMode) {
       // Replace with a dummy signal that we never invoke
-      signal = (new AbortController()).signal;
+      signals.browser = (new AbortController()).signal;
       controller.signal.addEventListener('abort', () => {
         logger.warning('browser_signal_debugging', 'Keeping browser open for debugging');
       });
     }
-    const signals = { browser: signal, global: globalSignal };
 
     let clientIdleTimer;
 
@@ -374,16 +373,16 @@ class ControlServer {
       browser.stop(new util.BrowserStopSignal('Browser ended unexpectedly'));
     } catch (e) {
       // Silence any errors from browserFn that happen after we called browser.stop().
-      if (!signal.aborted) {
+      if (!controller.signal.aborted) {
         logger.warning('browser_launch_error', e);
         browser.stop(new util.BrowserStopSignal('Browser ended unexpectedly'));
         throw e;
       }
     }
 
-    if (!result && signal.reason) {
+    if (!result) {
       // Throw BrowserConnectTimeout for retry purposes.
-      throw signal.reason;
+      throw controller.signal.reason;
     }
 
     return result;
