@@ -33,6 +33,7 @@ class ControlServer {
     // For `qtap test/index.html`, default root to cwd.
     let root = options.cwd;
     let testFileAbsolute;
+    let testFileQueryString = '';
     if (this.isURL(testFile)) {
       testFileAbsolute = testFile;
     } else {
@@ -47,13 +48,24 @@ class ControlServer {
       if (parent) {
         root = path.join(root, parent);
       }
+      // Support passing "test/index.html?module=foo" as a way to serve index.html,
+      // with the query string preserved in the URL used client-side, but not
+      // seen as part of the file name server-side.
+      if (testFileAbsolute.includes('?') && !fs.existsSync(testFileAbsolute)) {
+        const withoutQuery = testFileAbsolute.split('?')[0];
+        if (fs.existsSync(withoutQuery)) {
+          testFileQueryString = testFileAbsolute.replace(/^[^?]+/, '');
+          this.logger.debug('server_testfile_querystring', 'Preserving ' + testFileQueryString);
+          testFileAbsolute = withoutQuery;
+        }
+      }
       // Normalize testFile to "test/index.html".
       testFile = path.relative(root, testFileAbsolute);
       if (!testFile || testFile.startsWith('..')) {
         throw new Error(`Cannot serve ${testFile} from ${root}`);
       }
       // Normalize \backslash to POSIX slash, but only on Windows
-      // * To use as-is in URLs (launchBrowser/qtapUrlPath).
+      // * To use as-is in URLs (launchBrowser).
       // * Stable values in reporter output text.
       // * Stable values in event data.
       // * Only on Windows (pathToFileURL chooses automatically),
@@ -69,6 +81,7 @@ class ControlServer {
 
     this.root = root;
     this.testFile = testFile;
+    this.testFileQueryString = testFileQueryString;
     this.eventbus = eventbus;
     this.idleTimeout = options.idleTimeout;
     this.connectTimeout = options.connectTimeout;
@@ -138,7 +151,7 @@ class ControlServer {
     };
   }
 
-  /** @return {Promise<string>} HTML */
+  /** @return {Promise<Object>} Headers and HTML document */
   async fetchTestFile (file) {
     // fetch() does not support file URLs (as of writing, in Node.js 22).
     if (this.isURL(file)) {
@@ -147,10 +160,17 @@ class ControlServer {
       if (!resp.ok) {
         throw new Error('Remote URL responded with HTTP ' + resp.status);
       }
-      return await resp.text();
+      return {
+        // TODO: Write a test to confirm that we preserve response headers
+        headers: resp.headers,
+        body: await resp.text()
+      };
     } else {
       this.logger.debug('testfile_read', `Reading file contents from ${file}`);
-      return (await fsPromises.readFile(file)).toString();
+      return {
+        headers: new Headers(),
+        body: (await fsPromises.readFile(file)).toString()
+      };
     }
   }
 
@@ -158,6 +178,7 @@ class ControlServer {
     const clientId = 'client_' + ControlServer.nextClientId++;
     const logger = this.logger.channel(`qtap_browser_${clientId}_${browserName}`);
 
+    const proxyBase = await this.getProxyBase();
     // Serve the a test file from URL that looks like the original path when possible.
     //
     // - For static files, serve it from a URL that matches were it would be among the
@@ -170,20 +191,12 @@ class ControlServer {
     // NOTE: This is entirely cosmetic. For how the actual fetch, see fetchTestFile().
     // For how resources are requested client side, we use <base href> to ensure correctness.
     //
-    // TODO: Add test case to validate the URL resemblance to test file path.
-    //
-    // Example: WordPress password-strength-meter.js inspects the hostname and path name
-    // (e.g. www.mysite.test/mysite/). The test case for defaults observes this.
+    // Example: WordPress password-strength-meter.js inspects the hostname and path
+    // (e.g. www.mysite.test/mysite/). That test case depends on the real path.
     // https://github.com/WordPress/wordpress-develop/blob/6.7.1/tests/qunit/wp-admin/js/password-strength-meter.js#L100
-    let qtapUrlPath;
-    if (this.isURL(this.testFile)) {
-      const tmpUrl = new URL(this.testFile);
-      tmpUrl.searchParams.set('qtap_clientId', clientId);
-      qtapUrlPath = tmpUrl.pathname + tmpUrl.search;
-    } else {
-      qtapUrlPath = '/' + this.testFile + '?qtap_clientId=' + clientId;
-    }
-    const url = await this.getProxyBase() + qtapUrlPath;
+    const tmpUrl = new URL(this.testFile + this.testFileQueryString, proxyBase);
+    tmpUrl.searchParams.set('qtap_clientId', clientId);
+    const url = proxyBase + tmpUrl.pathname + tmpUrl.search;
 
     const maxTries = (browserFn.allowRetries === false || this.debugMode) ? 1 : 3;
     let i = 1;
@@ -401,9 +414,11 @@ class ControlServer {
       headInjectHtml = `<base href="${util.escapeHTML(this.testFile)}"/>` + headInjectHtml;
     }
 
+    let resp;
     let html;
     try {
-      html = await this.testFilePromise;
+      resp = await this.testFilePromise;
+      html = resp.body;
     } catch (e) {
       // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
       throw new Error('Could not open ' + this.testFile, { cause: e });
@@ -434,7 +449,10 @@ class ControlServer {
     (m) => '<script>(' + util.fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
     );
 
-    return html;
+    return {
+      headers: resp.headers,
+      body: html
+    };
   }
 
   async handleRequest (req, url, resp) {
@@ -458,8 +476,15 @@ class ControlServer {
       browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
       this.eventbus.emit('online', { clientId });
 
-      resp.writeHead(200, { 'Content-Type': util.MIME_TYPES[ext] || util.MIME_TYPES.html });
-      resp.write(await this.getTestFile(clientId));
+      const testFileResp = await this.getTestFile(clientId);
+      for (const [name, value] of testFileResp.headers) {
+        resp.setHeader(name, value);
+      }
+      if (!testFileResp.headers.get('Content-Type')) {
+        resp.setHeader('Content-Type', util.MIME_TYPES.html);
+      }
+      resp.writeHead(200);
+      resp.write(testFileResp.body);
       resp.end();
 
       // Count proxying the test file toward connectTimeout, not idleTimeout.

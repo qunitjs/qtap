@@ -1,3 +1,4 @@
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'url';
 import util from 'node:util';
@@ -161,9 +162,59 @@ QUnit.module('qtap', function (hooks) {
     );
 
     assert.deepEqual(finish, params.expected);
+    assert.deepEqual(finish.exitCode, 0, 'Exit code');
   });
 
   QUnit.test.each('run() events', {
+    'browser URL from filename': {
+      files: 'test/fixtures/fake_pass_4.txt',
+      browsers: 'fakeEcho',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js'
+      },
+      expected: [
+        'client: running test/fixtures/fake_pass_4.txt',
+        'online',
+        'consoleerror: Browser URL is /test/fixtures/fake_pass_4.txt?qtap_clientId=client_1',
+        'consoleerror: <script> found',
+        'result: { ok: true, total: 4, passed: 4, failed: 0 }',
+      ],
+      exitCode: 0
+    },
+    'browser URL from filename with query string': {
+      files: 'test/fixtures/fake_pass_4.txt?banana=1&apple=0',
+      browsers: 'fakeEcho',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js'
+      },
+      expected: [
+        'client: running test/fixtures/fake_pass_4.txt',
+        'online',
+        'consoleerror: Browser URL is /test/fixtures/fake_pass_4.txt?banana=1&apple=0&qtap_clientId=client_1',
+        'consoleerror: <script> found',
+        'result: { ok: true, total: 4, passed: 4, failed: 0 }',
+      ],
+      exitCode: 0,
+    },
+    'browser URL from filename and custom cwd': {
+      files: 'fixtures/fake_pass_4.txt?apple=0',
+      browsers: 'fakeEcho',
+      options: {
+        ...options,
+        cwd: 'test/',
+        config: 'fixtures/qtap.config.js',
+      },
+      expected: [
+        'client: running fixtures/fake_pass_4.txt',
+        'online',
+        'consoleerror: Browser URL is /fixtures/fake_pass_4.txt?apple=0&qtap_clientId=client_1',
+        'consoleerror: <script> found',
+        'result: { ok: true, total: 4, passed: 4, failed: 0 }',
+      ],
+      exitCode: 0,
+    },
     pass: {
       files: 'test/fixtures/pass.html',
       options,
@@ -440,5 +491,56 @@ QUnit.module('qtap', function (hooks) {
 
     assert.deepEqual(events, params.expected, 'Output');
     assert.deepEqual(result.exitCode, params.exitCode, 'Exit code');
+  });
+
+  // - The test server should serve the test file from an identically-looking
+  //   URL (except on our port, and with an extra query parameter),
+  //   and browser must see the path and query string of the given URL,
+  //   so that you can control the test framework (e.g. QUnit URL parameters)
+  //   via these parameters client-side.
+  // - The origin server must receive our proxied request with the
+  //   original path and parameters (without the qtap query parameter).
+  //
+  // See code comments in launchBrowser() for more information
+  QUnit.test('run() events [browser URL from custom server]', async function (assert) {
+    assert.timeout(40_000);
+
+    const server = http.createServer((req, resp) => {
+      resp.writeHead(200);
+      resp.end(
+        '# console: Origin server URL is ' + req.url + '\n'
+          + 'TAP version 13\nok 1 Foo\nok 2 Bar\n1..2\n'
+      );
+    });
+    server.listen();
+    const port = await new Promise((resolve) => {
+      // @ts-ignore
+      server.on('listening', () => resolve(server.address().port));
+    });
+
+    const run = qtap.run(`http://localhost:${port}/test/example.html?foo=bar`,
+      'fakeEcho',
+      {
+        ...options,
+        config: 'test/fixtures/qtap.config.js'
+      }
+    );
+    const events = debugReporter(run);
+    const result = await new Promise((resolve, reject) => {
+      run.on('finish', resolve);
+      run.on('error', reject);
+    });
+
+    assert.deepEqual(events, [
+      `client: running http://localhost:${port}/test/example.html?foo=bar`,
+      'online',
+      'consoleerror: Browser URL is /test/example.html?foo=bar&qtap_clientId=client_1',
+      'consoleerror: <script> found',
+      'consoleerror: Origin server URL is /test/example.html?foo=bar',
+      'result: { ok: true, total: 2, passed: 2, failed: 0 }',
+    ]);
+    assert.deepEqual(result.exitCode, 0, 'Exit code');
+
+    server.close();
   });
 });
