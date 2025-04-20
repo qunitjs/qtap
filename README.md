@@ -35,20 +35,20 @@ npx qtap test/index.html
   - No installation wizard.
 
 * **Real Debugging**
-  - Retreive console errors, uncaught errors, and unhandled Promise rejections from the browser directly in your build output.
+  - Retrieve console errors, uncaught errors, and unhandled Promise rejections from the browser directly in your build output.
   - Instantly debug your tests locally in a real browser of your choosing with full access to browser DevTools to set breakpoints, measure performance, step through function calls, measure code coverage, and more.
-  - No imposed bundling or transpilation. Only your unchanged source code or production bundler of choice, running as-is.
-  - No need to inspect Node.js or attach it to an incomplete version of Chrome DevTools.
+  - No imposed bundling or compiler abstraction. Only your unchanged source code or your production bundler of choice, running as-is.
+  - No need to inspect Node.js processes.
 
 * **Real Browsers**
-  - No need to support yet another "browser" just for testing (jsdom emulation in Node.js).
+  - No need to support yet another "browser" just for testing (e.g. jsdom in Node.js).
   - No Selenium or WebDriver to install, update, and manage (e.g. chromedriver or geckodriver).
   - No downloading large binaries of Chrome (e.g. Puppeteer).
   - No patched or modified versions of browsers (e.g. Playwright).
   - No Docker containers.
 
 * **Continuous Integration**
-  GitHub, Jenkins, Travis, Circle, you can run anywhere.
+  GitHub, Jenkins, Travis CI, Circle CI, you can run anywhere.
 
 * **Ecosystem**
   Your test framework likely already supports TAP.

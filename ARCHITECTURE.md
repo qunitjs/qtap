@@ -34,7 +34,7 @@ Examples:
 
   But, it's important to understand that this isn't because we ship built-in support for these specifically. Doing so would have likely have limited the versions we support, which in turn imposes an update churn for the end-user. It would also subtly alter how your code and test framework behave, which the user doesn't know about until things fail, at which point the illusion of "just works" quickly fades away. It would also incur extra maintenance and support issues for us.
 
-  Instead, we build on the framework-agnostic TAP protocol. The user is responsible for setting up this one thing (unless it's the default, like in QUnit and Tape), and after that everything truly just works. It works transparantly with nothing sent to QTap that you can't also see in the browser console. There are no surprise side-channels or secret ingredients.
+  Instead, we build on the framework-agnostic TAP protocol. The user is responsible for setting up this one thing (unless it's the default, like in QUnit and Tape), and after that everything truly just works. It works transparently with nothing sent to QTap that you can't also see in the browser console. There are no surprise side-channels or secret ingredients.
 
   See also the [Unix philosophy](https://en.wikipedia.org/wiki/Unix_philosophy).
 
