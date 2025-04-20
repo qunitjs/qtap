@@ -34,7 +34,7 @@ class ControlServer {
     let root = options.cwd;
     let testFileAbsolute;
     let testFileQueryString = '';
-    if (this.isURL(testFile)) {
+    if (util.isURL(testFile)) {
       testFileAbsolute = testFile;
     } else {
       // For `qtap ../foobar/test/index.html`, default root to ../foobar.
@@ -153,25 +153,181 @@ class ControlServer {
 
   /** @return {Promise<Object>} Headers and HTML document */
   async fetchTestFile (file) {
+    let headers, body;
+
     // fetch() does not support file URLs (as of writing, in Node.js 22).
-    if (this.isURL(file)) {
-      this.logger.debug('testfile_fetch', `Requesting a copy of ${file}`);
+    if (util.isURL(file)) {
+      this.logger.debug('testfile_fetch', `Requesting ${file}`);
       const resp = await fetch(file);
       if (!resp.ok) {
         throw new Error('Remote URL responded with HTTP ' + resp.status);
       }
-      return {
-        // TODO: Write a test to confirm that we preserve response headers
-        headers: resp.headers,
-        body: await resp.text()
-      };
+      // TODO: Write a test to confirm that we preserve response headers
+      headers = resp.headers;
+      body = await resp.text();
     } else {
-      this.logger.debug('testfile_read', `Reading file contents from ${file}`);
-      return {
-        headers: new Headers(),
-        body: (await fsPromises.readFile(file)).toString()
-      };
+      this.logger.debug('testfile_read', `Reading file ${file}`);
+      headers = new Headers();
+      body = (await fsPromises.readFile(file)).toString();
     }
+
+    this.logger.debug('testfile_ready', `Finished fetching ${file}`);
+    return { headers, body };
+  }
+
+  async getTestFile (clientId) {
+    const proxyBase = await this.getProxyBase();
+    const qtapTapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
+
+    let headInjectHtml = `<script>(${util.fnToStr(qtapClientHead, qtapTapUrl)})();</script>`;
+
+    // Add <base> tag so that URL-based files can fetch their resources directly from the
+    // original server. Prepend as early as possible. If the file has its own <base>, theirs
+    // will be after ours and correctly "win" by applying last.
+    if (util.isURL(this.testFile)) {
+      headInjectHtml = `<base href="${util.escapeHTML(this.testFile)}"/>` + headInjectHtml;
+    }
+
+    let resp;
+    let html;
+    try {
+      resp = await this.testFilePromise;
+      html = resp.body;
+    } catch (e) {
+      // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
+      throw new Error('Could not open ' + this.testFile, { cause: e });
+    }
+
+    // Head injection
+    // * Use a callback, to avoid corruption if "$1" appears in the user input.
+    // * The headInjectHtml string must be one line without any line breaks,
+    //   so that line numbers in stack traces presented in QTap output remain
+    //   transparent and correct.
+    // * Ignore <heading> and <head-thing>.
+    // * Support <head x=y...>, including with tabs or newlines before ">".
+    html = util.replaceOnce(html,
+      [
+        /<head(?:\s[^>]*)?>/i,
+        /<html(?:\s[^>]*)?>/i,
+        /<!doctype[^>]*>/i,
+        /^/
+      ],
+      (m) => m + headInjectHtml
+    );
+
+    html = util.replaceOnce(html,
+      [
+        /<\/body>(?![\s\S]*<\/body>)/i,
+        /<\/html>(?![\s\S]*<\/html>)/i,
+        /$/
+      ],
+      (m) => '<script>(' + util.fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
+    );
+
+    return {
+      headers: resp.headers,
+      body: html
+    };
+  }
+
+  async handleRequest (req, url, resp) {
+    const filePath = path.join(this.root, url.pathname);
+    const ext = path.extname(url.pathname).slice(1);
+    if (!filePath.startsWith(this.root)) {
+      // Disallow outside directory traversal
+      this.logger.debug('respond_static_deny', url.pathname);
+      return this.serveError(resp, 403, 'HTTP 403: QTap respond_static_deny');
+    }
+
+    const clientId = url.searchParams.get('qtap_clientId');
+    if (clientId !== null) {
+      // Serve the testfile from any URL path, as chosen by launchBrowser()
+      const browser = this.browsers.get(clientId);
+      if (browser) {
+        browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
+        this.eventbus.emit('online', { clientId });
+      } else if (this.debugMode) {
+        // Allow users to reload the page when in --debug mode.
+        // Note that do not handle more TAP results after a given test run has finished.
+        this.logger.debug('browser_reload_debug', clientId);
+      } else {
+        this.logger.debug('browser_unknown_clientId', clientId);
+        return this.serveError(resp, 403, 'HTTP 403: QTap browser_unknown_clientId.\n\nThis clientId was likely already served and cannot be repeated. Run qtap with --debug to bypass this restriction.');
+      }
+
+      const testFileResp = await this.getTestFile(clientId);
+      for (const [name, value] of testFileResp.headers) {
+        resp.setHeader(name, value);
+      }
+      if (!testFileResp.headers.get('Content-Type')) {
+        resp.setHeader('Content-Type', util.MIME_TYPES.html);
+      }
+      resp.writeHead(200);
+      resp.write(testFileResp.body);
+      resp.end();
+
+      // Count proxying the test file toward connectTimeout, not idleTimeout.
+      if (browser) {
+        browser.clientIdleActive = performance.now();
+      }
+      return;
+    }
+
+    if (!fs.existsSync(filePath)) {
+      this.logger.debug('respond_static_notfound', filePath);
+      return this.serveError(resp, 404, 'HTTP 404: QTap respond_static_notfound');
+    }
+
+    this.logger.debug('respond_static_pipe', filePath);
+    resp.writeHead(200, { 'Content-Type': util.MIME_TYPES[ext] || util.MIME_TYPES.bin });
+    fs.createReadStream(filePath)
+      .on('error', (err) => {
+        this.logger.warning('respond_static_pipe_error', err);
+        resp.end();
+      })
+      .pipe(resp);
+  }
+
+  handleTap (req, url, resp) {
+    let body = '';
+    req.on('data', (data) => {
+      body += data;
+    });
+    req.on('end', () => {
+      // Support QUnit 2.16 - 2.23: Strip escape sequences for tap-parser compatibility.
+      // Fixed in QUnit 2.23.1 with https://github.com/qunitjs/qunit/pull/1801.
+      body = util.stripAsciEscapes(body);
+      const bodyExcerpt = body.slice(0, 30) + '…';
+      const clientId = url.searchParams.get('qtap_clientId');
+      const browser = this.browsers.get(clientId);
+      if (browser) {
+        const now = performance.now();
+        browser.logger.debug('browser_tap_received',
+          `+${util.humanSeconds(now - browser.clientIdleActive)}s`,
+          bodyExcerpt
+        );
+        browser.tapParser.write(body);
+        browser.clientIdleActive = now;
+      } else {
+        this.logger.debug('browser_tap_unhandled', clientId, bodyExcerpt);
+      }
+    });
+    resp.writeHead(204);
+    resp.end();
+  }
+
+  /**
+   * @param {http.ServerResponse} resp
+   * @param {number} statusCode
+   * @param {string|Error} e
+   */
+  serveError (resp, statusCode, e) {
+    if (!resp.headersSent) {
+      resp.writeHead(statusCode, { 'Content-Type': util.MIME_TYPES.txt });
+      // @ts-ignore - TypeScript @types/node lacks Error.stack
+      resp.write((e.stack || String(e)) + '\n');
+    }
+    resp.end();
   }
 
   async launchBrowser (browserFn, browserName, globalSignal) {
@@ -401,168 +557,8 @@ class ControlServer {
     return result;
   }
 
-  async getTestFile (clientId) {
-    const proxyBase = await this.getProxyBase();
-    const qtapTapUrl = proxyBase + '/.qtap/tap/?qtap_clientId=' + clientId;
-
-    let headInjectHtml = `<script>(${util.fnToStr(qtapClientHead, qtapTapUrl)})();</script>`;
-
-    // Add <base> tag so that URL-based files can fetch their resources directly from the
-    // original server. Prepend as early as possible. If the file has its own <base>, theirs
-    // will be after ours and correctly "win" by applying last.
-    if (this.isURL(this.testFile)) {
-      headInjectHtml = `<base href="${util.escapeHTML(this.testFile)}"/>` + headInjectHtml;
-    }
-
-    let resp;
-    let html;
-    try {
-      resp = await this.testFilePromise;
-      html = resp.body;
-    } catch (e) {
-      // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
-      throw new Error('Could not open ' + this.testFile, { cause: e });
-    }
-    this.logger.debug('testfile_ready', `Finished fetching ${this.testFile}`);
-
-    // Head injection
-    // * Use a callback, to avoid corruption if "$1" appears in the user input.
-    // * The headInjectHtml string must be one line without any line breaks,
-    //   so that line numbers in stack traces presented in QTap output remain
-    //   transparent and correct.
-    // * Ignore <heading> and <head-thing>.
-    // * Support <head x=y...>, including with tabs or newlines before ">".
-    html = util.replaceOnce(html,
-      [
-        /<head(?:\s[^>]*)?>/i,
-        /<html(?:\s[^>]*)?>/i,
-        /<!doctype[^>]*>/i,
-        /^/
-      ],
-      (m) => m + headInjectHtml
-    );
-
-    html = util.replaceOnce(html,
-      [
-        /<\/body>(?![\s\S]*<\/body>)/i,
-        /<\/html>(?![\s\S]*<\/html>)/i,
-        /$/
-      ],
-      (m) => '<script>(' + util.fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
-    );
-
-    return {
-      headers: resp.headers,
-      body: html
-    };
-  }
-
-  async handleRequest (req, url, resp) {
-    const filePath = path.join(this.root, url.pathname);
-    const ext = path.extname(url.pathname).slice(1);
-    if (!filePath.startsWith(this.root)) {
-      // Disallow outside directory traversal
-      this.logger.debug('respond_static_deny', url.pathname);
-      return this.serveError(resp, 403, 'HTTP 403: QTap respond_static_deny');
-    }
-
-    const clientId = url.searchParams.get('qtap_clientId');
-    if (clientId !== null) {
-      // Serve the testfile from any URL path, as chosen by launchBrowser()
-      const browser = this.browsers.get(clientId);
-      if (browser) {
-        browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
-        this.eventbus.emit('online', { clientId });
-      } else if (this.debugMode) {
-        // Allow users to reload the page when in --debug mode.
-        // Note that do not handle more TAP results after a given test run has finished.
-        this.logger.debug('browser_reload_debug', clientId);
-      } else {
-        this.logger.debug('browser_unknown_clientId', clientId);
-        return this.serveError(resp, 403, 'HTTP 403: QTap browser_unknown_clientId.\n\nThis clientId was likely already served and cannot be repeated. Run qtap with --debug to bypass this restriction.');
-      }
-
-      const testFileResp = await this.getTestFile(clientId);
-      for (const [name, value] of testFileResp.headers) {
-        resp.setHeader(name, value);
-      }
-      if (!testFileResp.headers.get('Content-Type')) {
-        resp.setHeader('Content-Type', util.MIME_TYPES.html);
-      }
-      resp.writeHead(200);
-      resp.write(testFileResp.body);
-      resp.end();
-
-      // Count proxying the test file toward connectTimeout, not idleTimeout.
-      if (browser) {
-        browser.clientIdleActive = performance.now();
-      }
-      return;
-    }
-
-    if (!fs.existsSync(filePath)) {
-      this.logger.debug('respond_static_notfound', filePath);
-      return this.serveError(resp, 404, 'HTTP 404: QTap respond_static_notfound');
-    }
-
-    this.logger.debug('respond_static_pipe', filePath);
-    resp.writeHead(200, { 'Content-Type': util.MIME_TYPES[ext] || util.MIME_TYPES.bin });
-    fs.createReadStream(filePath)
-      .on('error', (err) => {
-        this.logger.warning('respond_static_pipe_error', err);
-        resp.end();
-      })
-      .pipe(resp);
-  }
-
-  handleTap (req, url, resp) {
-    let body = '';
-    req.on('data', (data) => {
-      body += data;
-    });
-    req.on('end', () => {
-      // Support QUnit 2.16 - 2.23: Strip escape sequences for tap-parser compatibility.
-      // Fixed in QUnit 2.23.1 with https://github.com/qunitjs/qunit/pull/1801.
-      body = util.stripAsciEscapes(body);
-      const bodyExcerpt = body.slice(0, 30) + '…';
-      const clientId = url.searchParams.get('qtap_clientId');
-      const browser = this.browsers.get(clientId);
-      if (browser) {
-        const now = performance.now();
-        browser.logger.debug('browser_tap_received',
-          `+${util.humanSeconds(now - browser.clientIdleActive)}s`,
-          bodyExcerpt
-        );
-        browser.tapParser.write(body);
-        browser.clientIdleActive = now;
-      } else {
-        this.logger.debug('browser_tap_unhandled', clientId, bodyExcerpt);
-      }
-    });
-    resp.writeHead(204);
-    resp.end();
-  }
-
-  /**
-   * @param {http.ServerResponse} resp
-   * @param {number} statusCode
-   * @param {string|Error} e
-   */
-  serveError (resp, statusCode, e) {
-    if (!resp.headersSent) {
-      resp.writeHead(statusCode, { 'Content-Type': util.MIME_TYPES.txt });
-      // @ts-ignore - TypeScript @types/node lacks Error.stack
-      resp.write((e.stack || String(e)) + '\n');
-    }
-    resp.end();
-  }
-
   async getProxyBase () {
     return this.proxyBase || await this.proxyBasePromise;
-  }
-
-  isURL (file) {
-    return file.startsWith('http:') || file.startsWith('https:');
   }
 }
 

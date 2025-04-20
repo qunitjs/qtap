@@ -87,6 +87,10 @@ export function replaceOnce (input, patterns, replacement) {
   return input;
 }
 
+export function isURL (file) {
+  return file.startsWith('http:') || file.startsWith('https:');
+}
+
 export class CommandNotFoundError extends Error {}
 
 export class BrowserStopSignal extends Error {}
