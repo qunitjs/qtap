@@ -506,11 +506,16 @@ QUnit.module('qtap', function (hooks) {
     assert.timeout(40_000);
 
     const server = http.createServer((req, resp) => {
-      resp.writeHead(200);
-      resp.end(
-        '# console: Origin server URL is ' + req.url + '\n'
-          + 'TAP version 13\nok 1 Foo\nok 2 Bar\n1..2\n'
-      );
+      if (req.url.startsWith('/test/example.html')) {
+        resp.writeHead(200);
+        resp.end(
+          '# console: Origin server URL is ' + req.url + '\n'
+            + 'TAP version 13\nok 1 Foo\nok 2 Bar\n1..2\n'
+        );
+      } else {
+        resp.writeHead(404);
+        resp.end('Not Found\n');
+      }
     });
     server.listen();
     const port = await new Promise((resolve) => {

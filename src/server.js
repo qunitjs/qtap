@@ -432,21 +432,23 @@ class ControlServer {
     //   transparent and correct.
     // * Ignore <heading> and <head-thing>.
     // * Support <head x=y...>, including with tabs or newlines before ">".
-    html = util.replaceOnce(html, [
-      /<head(?:\s[^>]*)?>/i,
-      /<html(?:\s[^>]*)?>/i,
-      /<!doctype[^>]*>/i,
-      /^/
-    ],
-    (m) => m + headInjectHtml
+    html = util.replaceOnce(html,
+      [
+        /<head(?:\s[^>]*)?>/i,
+        /<html(?:\s[^>]*)?>/i,
+        /<!doctype[^>]*>/i,
+        /^/
+      ],
+      (m) => m + headInjectHtml
     );
 
-    html = util.replaceOnce(html, [
-      /<\/body>(?![\s\S]*<\/body>)/i,
-      /<\/html>(?![\s\S]*<\/html>)/i,
-      /$/
-    ],
-    (m) => '<script>(' + util.fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
+    html = util.replaceOnce(html,
+      [
+        /<\/body>(?![\s\S]*<\/body>)/i,
+        /<\/html>(?![\s\S]*<\/html>)/i,
+        /$/
+      ],
+      (m) => '<script>(' + util.fnToStr(qtapClientBody, qtapTapUrl) + ')();</script>' + m
     );
 
     return {
