@@ -463,20 +463,24 @@ class ControlServer {
     if (!filePath.startsWith(this.root)) {
       // Disallow outside directory traversal
       this.logger.debug('respond_static_deny', url.pathname);
-      return this.serveError(resp, 403, 'Forbidden');
+      return this.serveError(resp, 403, 'HTTP 403: QTap respond_static_deny');
     }
 
     const clientId = url.searchParams.get('qtap_clientId');
     if (clientId !== null) {
       // Serve the testfile from any URL path, as chosen by launchBrowser()
       const browser = this.browsers.get(clientId);
-      if (!browser) {
-        this.logger.debug('browser_connected_unknown', clientId);
-        return this.serveError(resp, 403, 'Forbidden');
+      if (browser) {
+        browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
+        this.eventbus.emit('online', { clientId });
+      } else if (this.debugMode) {
+        // Allow users to reload the page when in --debug mode.
+        // Note that do not handle more TAP results after a given test run has finished.
+        this.logger.debug('browser_reload_debug', clientId);
+      } else {
+        this.logger.debug('browser_unknown_clientId', clientId);
+        return this.serveError(resp, 403, 'HTTP 403: QTap browser_unknown_clientId.\n\nThis clientId was likely already served and cannot be repeated. Run qtap with --debug to bypass this restriction.');
       }
-
-      browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
-      this.eventbus.emit('online', { clientId });
 
       const testFileResp = await this.getTestFile(clientId);
       for (const [name, value] of testFileResp.headers) {
@@ -490,13 +494,15 @@ class ControlServer {
       resp.end();
 
       // Count proxying the test file toward connectTimeout, not idleTimeout.
-      browser.clientIdleActive = performance.now();
+      if (browser) {
+        browser.clientIdleActive = performance.now();
+      }
       return;
     }
 
     if (!fs.existsSync(filePath)) {
       this.logger.debug('respond_static_notfound', filePath);
-      return this.serveError(resp, 404, 'Not Found');
+      return this.serveError(resp, 404, 'HTTP 404: QTap respond_static_notfound');
     }
 
     this.logger.debug('respond_static_pipe', filePath);
