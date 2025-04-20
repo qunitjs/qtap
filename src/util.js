@@ -95,6 +95,21 @@ export class BrowserConnectTimeout extends Error {}
 
 export const LocalBrowser = {
   /**
+   * @return {Promise<number>}
+   */
+  async findAvailablePort () {
+    const net = await import('node:net');
+    return new Promise((resolve, _reject) => {
+      const srv = net.createServer();
+      srv.listen(0, () => {
+        // @ts-ignore - Not null after listen()
+        const port = srv.address().port;
+        srv.close(() => resolve(port));
+      });
+    });
+  },
+
+  /**
    * @param {string|Array<string|null>|Generator<string|null|undefined>} paths
    *  Path to an executable command or an iterable list of candidate paths to
    *  check and use the first one that exists.

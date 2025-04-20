@@ -6,18 +6,6 @@ async function delay (wait) {
   await new Promise(resolve => setTimeout(resolve, wait));
 }
 
-async function findAvailablePort () {
-  const net = await import('node:net');
-  return new Promise((resolve, _reject) => {
-    const srv = net.createServer();
-    srv.listen(0, () => {
-      // @ts-ignore - Not null after listen()
-      const port = srv.address().port;
-      srv.close(() => resolve(port));
-    });
-  });
-}
-
 async function launchSafariDriver (bin, port, signals, logger) {
   try {
     // Use the global signal here since the process may be shared by multiple instances
@@ -67,7 +55,7 @@ async function safari (url, signals, logger) {
     if (process.platform !== 'darwin' || !safaridriverBin) {
       throw new CommandNotFoundError('Safari requires macOS and safaridriver');
     }
-    sharedSafariDriverPort = findAvailablePort();
+    sharedSafariDriverPort = LocalBrowser.findAvailablePort();
     launchSafariDriver(safaridriverBin, await sharedSafariDriverPort, signals, logger);
   } else {
     // This is not an optimization. Safari can only be claimed by one safaridriver.
