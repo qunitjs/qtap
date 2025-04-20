@@ -13,7 +13,9 @@ QUnit.module('structure', function () {
 
     let expectedHtmlFiles = fs.readFileSync(path.join(__dirname, 'qtap.test.js'), 'utf8')
       .split('\n')
-      .map((line) => line.replace(/^\s*files: 'test\/fixtures\/(.+\.html)',$|^.*$|/, '$1'))
+      // match `files: 'test/fixtures/foo.html'`
+      // match `'/test/fixtures/foo.html'`
+      .map((line) => line.replace(/^\s*(?:files: )?'\/?test\/fixtures\/(.+\.html)',$|^.*$|/, '$1'))
       .filter(Boolean)
       .sort();
     // Remove duplicates

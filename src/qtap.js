@@ -180,20 +180,33 @@ function run (files, browserNames = 'detect', runOptions = {}) {
     const finish = {
       ok: true,
       exitCode: 0,
-      bails: {},
-      results: {}
+      total: 0,
+      passed: 0,
+      failed: 0,
+      skips: [],
+      todos: [],
+      failures: [],
+      bailout: false
     };
     eventbus.on('bail', (event) => {
-      finish.ok = false;
-      finish.exitCode = 1;
-      finish.bails[event.clientId] = event;
-    });
-    eventbus.on('result', (event) => {
-      if (!event.ok) {
+      if (finish.ok) {
         finish.ok = false;
         finish.exitCode = 1;
+        finish.bailout = event.reason;
       }
-      finish.results[event.clientId] = event;
+    });
+    eventbus.on('result', (event) => {
+      finish.total += event.total;
+      finish.passed += event.passed;
+      finish.failed += event.failed;
+
+      if (finish.ok && !event.ok) {
+        finish.ok = false;
+        finish.exitCode = 1;
+        finish.skips = event.skips;
+        finish.todos = event.todos;
+        finish.failures = event.failures;
+      }
     });
 
     // Wait for all tests and browsers to finish/stop, regardless of errors thrown,

@@ -162,7 +162,6 @@ class ControlServer {
       if (!resp.ok) {
         throw new Error('Remote URL responded with HTTP ' + resp.status);
       }
-      // TODO: Write a test to confirm that we preserve response headers
       headers = resp.headers;
       body = await resp.text();
     } else {
@@ -257,7 +256,11 @@ class ControlServer {
 
       const testFileResp = await this.getTestFile(clientId);
       for (const [name, value] of testFileResp.headers) {
-        resp.setHeader(name, value);
+        // Ignore these incompatible headers from the original response,
+        // as otherwise the browser may truncate the amended test file.
+        if (!['content-length', 'transfer-encoding'].includes(name.toLowerCase())) {
+          resp.setHeader(name, value);
+        }
       }
       if (!testFileResp.headers.get('Content-Type')) {
         resp.setHeader('Content-Type', util.MIME_TYPES.html);

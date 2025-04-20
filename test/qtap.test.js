@@ -1,16 +1,18 @@
 import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'url';
 import util from 'node:util';
 
 import qtap from '../src/qtap.js';
 import { ControlServer } from '../src/server.js';
+import { MIME_TYPES } from '../src/util.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const cwd = path.join(__dirname, '..');
+const root = path.join(__dirname, '..');
 const options = {
-  cwd,
+  cwd: root,
   idleTimeout: 30,
   verbose: !!process.env.CI,
   // verbose: true, // debugging
@@ -36,14 +38,9 @@ function debugReporter (eventbus) {
 const EXPECTED_FAKE_PASS_4 = {
   ok: true,
   exitCode: 0,
-  results: {
-    client_1: {
-      clientId: 'client_1',
-      ok: true, total: 4, passed: 4, failed: 0,
-      skips: [], todos: [], failures: [],
-    }
-  },
-  bails: {},
+  total: 4, passed: 4, failed: 0,
+  skips: [], todos: [], failures: [],
+  bailout: false
 };
 
 QUnit.module('qtap', function (hooks) {
@@ -519,7 +516,6 @@ QUnit.module('qtap', function (hooks) {
     });
     server.listen();
     const port = await new Promise((resolve) => {
-      // @ts-ignore
       server.on('listening', () => resolve(server.address().port));
     });
 
@@ -547,5 +543,68 @@ QUnit.module('qtap', function (hooks) {
     assert.deepEqual(result.exitCode, 0, 'Exit code');
 
     server.close();
+  });
+
+  // - The test server must remove any Content-Length response header
+  //   if the origin server sends one, as otherwise the browser will
+  //   truncate the response mid-way and time out.
+  // - The test server must inject a <base> tag or otherwise ensure that
+  //   any referenced JS and CSS files are requested from the origin server.
+  QUnit.test('runWaitFor() [proxy resources from custom server]', async function (assert) {
+    assert.timeout(40_000);
+
+    const requestLog = [];
+
+    // Static file server
+    const server = http.createServer((req, resp) => {
+      const ext = path.extname(req.url).slice(1);
+      const filePath = path.join(root, req.url);
+      console.error('# Request ' + req.url + ' for ' + filePath);
+      let fileBuf;
+      try {
+        fileBuf = fs.readFileSync(filePath);
+      } catch (e) {
+        resp.writeHead(404);
+        resp.end();
+        return;
+      }
+      requestLog.push(req.url);
+      resp.writeHead(200, {
+        'Content-Type': MIME_TYPES[ext] || MIME_TYPES.bin,
+        'Content-Length': fileBuf.length,
+        'Last-Modified': 'Fri, 12 Aug 2011 09:15:00 +0300',
+      });
+      resp.write(fileBuf);
+      resp.end();
+    });
+    server.listen();
+    const port = await new Promise((resolve) => {
+      server.on('listening', () => resolve(server.address().port));
+    });
+
+    const finish = await qtap.runWaitFor(
+      `http://localhost:${port}/test/fixtures/proxied.html`,
+      'firefox',
+      options
+    );
+    server.close();
+
+    assert.deepEqual(finish, {
+      ok: true,
+      exitCode: 0,
+      total: 2,
+      passed: 2,
+      failed: 0,
+      skips: [],
+      todos: [],
+      failures: [],
+      bailout: false
+    });
+    assert.deepEqual(requestLog.sort(), [
+      '/node_modules/qunit/qunit/qunit.css',
+      '/node_modules/qunit/qunit/qunit.js',
+      '/test/fixtures/proxied.html',
+      '/test/fixtures/proxied.js',
+    ], 'requestLog');
   });
 });

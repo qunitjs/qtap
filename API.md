@@ -163,14 +163,21 @@ async function mybrowser (url, signals) {
 
 ### Event: `'finish'`
 
+Summary event that is ideal for when you run one test suite in one browser, or if you otherwise don't need a break down of results by client.
+
 * `event.ok <boolean>` Aggregate status of each client's results. If any failed, this is false.
 * `event.exitCode <number>` Suggested exit code, 0 for success, 1 for failed.
-* `event.bails <Object<string,string>>` For clients that bailed, this contains the bail reason keyed by client ID.
-* `event.results <Object<string,Object>>` For clients completed their test, this contains the detailed `result` event object, keyed by client ID.
+* `event.total <number>` Aggregated from `result` events.
+* `event.passed <number>` Aggregated from `result` events.
+* `event.failed <number>` Aggregated from `result` events.
+* `event.skips <array>` Carried from the first client that failed, or empty.
+* `event.todos <array>` Carried from the first client that failed, or empty.
+* `event.failures <array>` Carried from the first client that failed, or empty.
+* `event.bailout <false|string>` Carried from the first client that failed, or false.
 
 ## QTap reporter events
 
-A client will never emit these events more than once, except for `consoleerror`.
+A client will emit each of these events only once, except `consoleerror` which may be emitted any number of times.
 
 ### Event: `'client'`
 
@@ -209,9 +216,9 @@ The `bail` event is emitted when a browser was unable to start or complete a tes
 
 ### Event: `'consoleerror'`
 
-The `consoleerror` is event for any warnings or errors that may be observed from the browser console. These are for debug purposes only, and do not indicate that any test has failed. A complete and successful test run, may nonetheless print warnings or errors to the console.
+The `consoleerror` event relays any warning or error messages from the browser console. These are for debug purposes only, and do not indicate that a test has failed. A complete and successful test run, may nonetheless print warnings or errors to the console.
 
-It is recommended that reporters only display these if a browser bailed, or if the result includes failed tests.
+It is recommended that reporters only display console errors if a test run failed (i.e. there was a failed test result, or the cilent bailed).
 
 * `event.clientId <string>`
 * `event.message <string>`
