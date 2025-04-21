@@ -90,7 +90,7 @@ class ControlServer {
     this.browsers = new Map();
     // Optimization: Prefetch test file in parallel with server creation and browser launching.
     //
-    // To prevent a global error (unhandledRejection), we add a no-op catch() handler here.
+    // To prevent a Node.js error (unhandledRejection), we add a no-op catch() handler here.
     // Once launchBrowser is called, we will await this in handleRequest/getTestFile,
     // which is then propertly caught by server.on('request') below, which emits it
     // as 'error' event.
@@ -130,9 +130,19 @@ class ControlServer {
             await this.handleRequest(req, url, resp);
         }
       } catch (e) {
-        this.logger.warning('respond_uncaught', req.url, String(e));
-        eventbus.emit('error', e);
+        this.logger.warning('server_respond_uncaught', e);
         this.serveError(resp, 500, /** @type {Error} */ (e));
+
+        // When we catch this, qtap.run() is awaiting ControlServer#launchBrowser
+        // (as browerPromise). Make sure we don't get stuck, by stopping the browsers.
+        // That way:
+        // - launchBrowser() will throw/return,
+        // - qtap.run() emit error/finish,
+        // - qtap.runWaitFor() will throw/return.
+        for (const browser of this.browsers.values()) {
+          // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
+          browser.stop(new util.BrowserStopSignal(String(e), { cause: e }));
+        }
       }
     });
 
@@ -144,8 +154,7 @@ class ControlServer {
         throw new Error('ControlServer.close must only be called once');
       }
       this.closeCalled = true;
-
-      this.logger.debug('http_close');
+      this.logger.debug('server_close');
       server.close();
       server.closeAllConnections();
     };
