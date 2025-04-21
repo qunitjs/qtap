@@ -77,15 +77,6 @@ QUnit.module('qtap', function (hooks) {
       options,
       error: /Unknown browser unknown/,
     },
-    'file not found': {
-      files: 'notfound.html',
-      browsers: 'fake',
-      options: {
-        ...options,
-        config: 'test/fixtures/qtap.config.js'
-      },
-      error: new Error('Could not open notfound.html'),
-    },
     'config not found': {
       files: 'notfound.html',
       browsers: 'maybe',
@@ -332,6 +323,20 @@ QUnit.module('qtap', function (hooks) {
         'result: { ok: true, total: 4, passed: 4, failed: 0 }',
       ],
       exitCode: 0
+    },
+    notfound: {
+      files: 'notfound.html',
+      browsers: 'fake',
+      options: {
+        ...options,
+        config: 'test/fixtures/qtap.config.js'
+      },
+      expected: [
+        'client: running notfound.html',
+        'online',
+        'bail: Error: Could not open notfound.html',
+      ],
+      exitCode: 1
     },
     qunitPass: {
       files: 'test/fixtures/qunit-pass.html',

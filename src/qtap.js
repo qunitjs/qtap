@@ -222,8 +222,6 @@ function run (files, browserNames = 'detect', runOptions = {}) {
   })();
   runPromise
     .finally(() => {
-      // Make sure we close our server even if the above throws, so that Node.js
-      // may naturally exit (no open ports remaining)
       for (const server of servers) {
         server.close();
       }
