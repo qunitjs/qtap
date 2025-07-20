@@ -4,10 +4,12 @@
 function qtapClientHead () {
   // Support QUnit 2.24+: Enable TAP reporter, declaratively.
   window.qunit_config_reporters_tap = true;
+  window.qunit_config_reporters_html = false;
 
   // Cache references to original methods, to avoid getting trapped by mocks (e.g. Sinon)
   var setTimeout = window.setTimeout;
   var XMLHttpRequest = window.XMLHttpRequest;
+  var createTextNode = document.createTextNode && document.createTextNode.bind && document.createTextNode.bind(document);
 
   // Support IE 9: console.log.apply is undefined.
   // Don't bother with Function.apply.call. Skip super call instead.
@@ -67,6 +69,7 @@ function qtapClientHead () {
   function createBufferedWrite (url) {
     var buffer = '';
     var isSending = false;
+    var debugElement = false;
     function send () {
       var body = buffer;
       buffer = '';
@@ -81,8 +84,16 @@ function qtapClientHead () {
       };
       xhr.open('POST', url, true);
       xhr.send(body);
+
+      // Optimization: Only check this once, during the first send
+      if (debugElement === false) {
+        debugElement = document.getElementById('__qtap_debug_element') || null;
+      }
+      if (debugElement) {
+        debugElement.appendChild(createTextNode(body));
+      }
     }
-    return function write (str) {
+    return function writeTap (str) {
       buffer += str + '\n';
       if (!isSending) {
         isSending = true;

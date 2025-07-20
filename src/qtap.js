@@ -8,6 +8,7 @@ import util from 'node:util';
 import browsers from './browsers.js';
 import reporters from './reporters.js';
 import { ControlServer } from './server.js';
+import { LocalBrowser, QTapError } from './util.js';
 
 /**
  * @typedef {Object} Logger
@@ -102,14 +103,15 @@ function makeLogger (defaultChannel, printVerbose, verbose = false) {
  * @return {EventEmitter}
  */
 function run (files, browserNames = 'detect', runOptions = {}) {
-  if (typeof files === 'string') files = [files];
-  if (typeof browserNames === 'string') browserNames = [browserNames];
   if (!files || !files.length) {
-    throw new Error('Must pass one or more test files to run');
+    throw new QTapError('Must pass one or more test files to run');
   }
   if (!browserNames || !browserNames.length) {
-    throw new Error('Must pass one or more browser names or omit for the default');
+    throw new QTapError('Must pass one or more browser names or omit for the default');
   }
+  // Remove duplicates by using a Set
+  files = Array.from(new Set(typeof files === 'string' ? [files] : files));
+  browserNames = Array.from(new Set(typeof browserNames === 'string' ? [browserNames] : browserNames));
   const options = {
     cwd: process.cwd(),
     idleTimeout: 5,
@@ -124,15 +126,11 @@ function run (files, browserNames = 'detect', runOptions = {}) {
   const logger = makeLogger('qtap_main', options.printVerbose, options.verbose);
   const eventbus = new EventEmitter();
   const globalController = new AbortController();
+  const globalSignal = globalController.signal;
 
-  if (options.reporter) {
-    if (options.reporter in reporters) {
-      logger.debug('reporter_init', options.reporter);
-      reporters[options.reporter](eventbus);
-    } else {
-      logger.warning('reporter_unknown', options.reporter);
-    }
-  }
+  // Disable MaxListenersExceededWarning because ControlServer.launchBrowserAndConnect adds
+  // an 'error' listener for every browser launch (N test files * N browsers * N retries).
+  eventbus.setMaxListeners(0);
 
   const servers = [];
   for (const file of files) {
@@ -160,22 +158,91 @@ function run (files, browserNames = 'detect', runOptions = {}) {
         throw new Error(`Loading ${options.config} failed: ${String(e)}`, { cause: e });
       }
     }
-    const globalSignal = globalController.signal;
 
-    const browerPromises = [];
+    if (options.reporter) {
+      const reporter = reporters[options.reporter] || config?.reporters?.[options.reporter];
+      if (typeof reporter !== 'function') {
+        const available = Array.from(new Set([
+          ...Object.keys(reporters),
+          ...(config?.reporters ? Object.keys(config.reporters) : [])
+        ]));
+        throw new QTapError(`Unknown reporter ${options.reporter}\n\nAvailable reporters:\n* ${available.join('\n* ')}`);
+      }
+
+      logger.debug('reporter_init', options.reporter);
+
+      // Create a safe event listener object, which will:
+      // - Catch any errors from reporter functions,
+      //   so that emit() is safe in our internal code.
+      // - Prevent reporter functions from tampering with the internal eventbus
+      //   object (can only call "on", not "emit"; cannot break "on" for other reporters)
+      //   to protect integrity of QTap, and other reporters.
+      // - Print detailed errors in verbose mode. Any thrown erorrs here are likely
+      //   internal to QTap and not reported in detail to users by default.
+      // - Re-throw as util.BrowserStopSignal so that ControlServer#launchBrowser
+      //   won't retry/rerun tests due to an internal error (likely deterministic).
+      const safeEventConsumer = {
+        on (event, fn) {
+          eventbus.on(event, function () {
+            try {
+              fn.apply(null, arguments);
+            } catch (e) {
+              logger.warning('reporter_caught', e);
+              // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
+              const niceErr = new Error(`The "${options.reporter}" reporter encountered an error in the "${event}" event handler.` + (!options.verbose ? ' Run with --verbose to output a stack trace.' : ''), { cause: e });
+              for (const server of servers) {
+                server.stopBrowsers(niceErr);
+              }
+            }
+          });
+        }
+      };
+      reporter(safeEventConsumer);
+    }
+
+    const browserPromises = [];
     for (const browserName of browserNames) {
       logger.debug('get_browser', browserName);
       const browserFn = browsers[browserName] || config?.browsers?.[browserName];
       if (typeof browserFn !== 'function') {
-        throw new Error('Unknown browser ' + browserName);
+        const available = Array.from(new Set([
+          ...Object.keys(browsers),
+          ...(config?.browsers ? Object.keys(config.browsers) : [])
+        ]));
+        throw new QTapError(`Unknown browser ${browserName}\n\nAvailable browsers:\n* ${available.join('\n* ')}`);
       }
-      browserFn.getDisplayName = () => browserFn.displayName || browserName;
       for (const server of servers) {
+        await server.proxyBasePromise;
         // Each launchBrowser() returns a Promise that settles when the browser exits.
         // Launch concurrently, and await afterwards.
-        browerPromises.push(server.launchBrowser(browserFn, browserName, globalSignal));
+        browserPromises.push(server.launchBrowser(browserFn, browserName, globalSignal));
       }
     }
+
+    // The 'clients' event must be emitted:
+    // * ... after launchBrowser() and browserFn(), because they may browserFn.displayName
+    //       up until their first async logic. This powers the dynamic display name set by
+    //       the "detect" browser (to indicate to the selected browser),
+    //       and by the BrowserStack plugin (to expand strings like "firefox_latest").
+    // * ... early, so that reporters can quickly indicate that the browser is starting.
+    // * ... exactly once, regardless of launch retries.
+    //
+    // Therefore, we must not await browserPromises until after this event is emitted.
+    // Therefore, server.launchBrowser and server.launchBrowserAttempt must not have
+    // any async logic before it calls browserFn, as otherwise we'd read it too soon.
+    const clients = {};
+    for (const server of servers) {
+      for (const browser of server.browsers.values()) {
+        clients[browser.clientId] = {
+          clientId: browser.clientId,
+          testFile: server.testFile + server.testFileQueryString,
+          browserName: browser.browserName,
+          displayName: browser.getDisplayName(),
+        };
+      }
+    }
+    logger.debug('event_clients', clients);
+    eventbus.emit('clients', { clients: clients });
 
     const finish = {
       ok: true,
@@ -183,19 +250,9 @@ function run (files, browserNames = 'detect', runOptions = {}) {
       total: 0,
       passed: 0,
       failed: 0,
-      skips: [],
-      todos: [],
-      failures: [],
       bailout: false
     };
-    eventbus.on('bail', (event) => {
-      if (finish.ok) {
-        finish.ok = false;
-        finish.exitCode = 1;
-        finish.bailout = event.reason;
-      }
-    });
-    eventbus.on('result', (event) => {
+    eventbus.on('clientresult', (event) => {
       finish.total += event.total;
       finish.passed += event.passed;
       finish.failed += event.failed;
@@ -203,33 +260,50 @@ function run (files, browserNames = 'detect', runOptions = {}) {
       if (finish.ok && !event.ok) {
         finish.ok = false;
         finish.exitCode = 1;
-        finish.skips = event.skips;
-        finish.todos = event.todos;
-        finish.failures = event.failures;
+        finish.bailout = event.bailout;
       }
     });
 
-    // Wait for all tests and browsers to finish/stop, regardless of errors thrown,
-    // to avoid dangling browser processes.
-    await Promise.allSettled(browerPromises);
-
-    // Re-await, this time letting the first of any errors bubble up.
-    for (const browerPromise of browerPromises) {
-      await browerPromise;
+    // If we receive any unrecoverable browser error (i.e. command not found from browserFn,
+    // file not found from ControlServer, or browser connect timeout from launchBrowser),
+    // then tell other test servers to stop their browsers early.
+    // This will be the 'error' event and there is no reporting after that.
+    let firstError;
+    try {
+      await Promise.all(browserPromises);
+    } catch (e) {
+      firstError = e;
+      for (const server of servers) {
+        // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
+        server.stopBrowsers(new Error('Cancelled because another browser errored', { cause: e }));
+      }
+    }
+    // Re-await for clean shutdown, including for other failed servers
+    await Promise.allSettled(browserPromises);
+    // Let the first error bubble up
+    if (firstError) {
+      throw firstError;
     }
 
+    logger.debug('event_finish', finish);
     eventbus.emit('finish', finish);
   })();
   runPromise
     .finally(() => {
+      logger.debug('runpromise_finally');
       for (const server of servers) {
         server.close();
       }
 
+      // Normally each browerPromise ends with an abort signal (browser.stop) to clean itself.
+      // If we're here because a browerPromise errored early, then globalController will also
+      // indirectly abort the remaining per-browser controllers and thus avoid any
+      // dangling proceses/resources from the other browsers.
       logger.debug('shared_cleanup', 'Invoke global signal to clean up shared resources');
       globalController.abort();
     })
     .catch((error) => {
+      logger.debug('runpromise_catch');
       // Node.js automatically ensures users cannot forget to listen for the 'error' event.
       // For this reason, runWaitFor() is a separate method, because that converts the
       // 'error' event into a rejected Promise. If we created that Promise as part of run()
@@ -267,5 +341,6 @@ export default {
   runWaitFor,
 
   browsers,
-  LocalBrowser: browsers.LocalBrowser,
+  LocalBrowser,
+  QTapError
 };

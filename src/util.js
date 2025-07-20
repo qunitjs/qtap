@@ -91,11 +91,125 @@ export function isURL (file) {
   return file.startsWith('http:') || file.startsWith('https:');
 }
 
-export class CommandNotFoundError extends Error {}
+/**
+ * TODO: Write unit tests.
+ *
+ * @param {Set<string>} testFiles
+ * @return {Map<string,string>}
+ */
+export function shortenTestFileLabels (testFiles) {
+  let shortest = new Map();
+  let tmpMap, tmpSet;
+  for (const testFile of testFiles) {
+    shortest.set(testFile, testFile);
+  }
 
-export class BrowserStopSignal extends Error {}
+  // reduce to unique URL host+port
+  tmpMap = new Map();
+  tmpSet = new Set();
+  for (let [testFile, label] of shortest) {
+    const tmpUrl = new URL(label, 'https://qtap.invalid');
+    label = tmpUrl.hostname;
+    tmpMap.set(testFile, label);
+    tmpSet.add(label);
+  }
+  if (tmpSet.size === shortest.size) {
+    shortest = tmpMap;
 
-export class BrowserConnectTimeout extends Error {}
+    // reduce to unique URL host
+    tmpMap = new Map();
+    tmpSet = new Set();
+    for (let [testFile, label] of shortest) {
+      const tmpUrl = new URL(label, 'https://qtap.invalid');
+      label = tmpUrl.host;
+      tmpMap.set(testFile, label);
+      tmpSet.add(label);
+    }
+    if (tmpSet.size === shortest.size) {
+      shortest = tmpMap;
+    }
+
+    return shortest;
+  }
+
+  // keep going, we have either files or URLs with a common hostname
+
+  // strip hash
+  tmpMap = new Map();
+  tmpSet = new Set();
+  for (let [testFile, label] of shortest) {
+    label = label.replace(/#.*/, '');
+    tmpMap.set(testFile, label);
+    tmpSet.add(label);
+  }
+  if (tmpSet.size === shortest.size) {
+    shortest = tmpMap;
+  }
+
+  // strip querystring
+  tmpMap = new Map();
+  tmpSet = new Set();
+  for (let [testFile, label] of shortest) {
+    label = label.replace(/\?.*/, '');
+    tmpMap.set(testFile, label);
+    tmpSet.add(label);
+  }
+  if (tmpSet.size === shortest.size) {
+    shortest = tmpMap;
+  }
+
+  // strip common host+port
+  const first = new URL(shortest.values().next().value, 'https://qtap.invalid');
+  tmpMap = new Map();
+  for (let [testFile, label] of shortest) {
+    const tmpUrl = new URL(label, 'https://qtap.invalid');
+    if (tmpUrl.hostname === 'qtap.invalid' || tmpUrl.hostname !== first.hostname) {
+      break;
+    }
+    label = tmpUrl.pathname + tmpUrl.search;
+    tmpMap.set(testFile, label);
+  }
+  if (tmpMap.size === shortest.size) {
+    shortest = tmpMap;
+  }
+
+  // strip parent dir (leave URLs unchanged)
+  tmpMap = new Map();
+  tmpSet = new Set();
+  for (let [testFile, label] of shortest) {
+    // Treat as URL because path.basename() would break foo/bar.html?x=a/b to "b"
+    const tmpUrl = new URL(label, 'https://qtap.invalid');
+    if (tmpUrl.host !== 'qtap.invalid') {
+      break;
+    }
+    label = path.basename(tmpUrl.pathname) + tmpUrl.search;
+    tmpMap.set(testFile, label);
+    tmpSet.add(label);
+  }
+  if (tmpSet.size === shortest.size) {
+    shortest = tmpMap;
+  }
+
+  return shortest;
+}
+
+export class QTapError extends Error {
+  name = 'Error';
+  /** @type {null|Object} */
+  qtapClient = null;
+}
+
+export class CommandNotFoundError extends QTapError {
+  name = 'CommandNotFoundError';
+}
+
+export class BrowserStopSignal extends QTapError {
+  name = 'BrowserStopSignal';
+}
+
+export class BrowserConnectTimeout extends QTapError {
+  name = 'BrowserConnectTimeout';
+}
 
 export const LocalBrowser = {
   /**
@@ -138,6 +252,7 @@ export const LocalBrowser = {
       paths = [paths];
     }
     let exe;
+    const checked = [];
     for (const candidate of paths) {
       if (candidate !== undefined && candidate !== null) {
         // Optimization: Use fs.existsSync. It is on par with accessSync and statSync,
@@ -150,11 +265,12 @@ export const LocalBrowser = {
           break;
         } else {
           logger.debug('browser_exe_check', candidate);
+          checked.push(candidate);
         }
       }
     }
     if (!exe) {
-      throw new CommandNotFoundError('No executable found');
+      throw new CommandNotFoundError('No executable found\n\nChecked:\n* ' + checked.join('\n* '));
     }
 
     logger.debug('browser_spawn_command', exe, args);

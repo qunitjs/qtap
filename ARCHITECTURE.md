@@ -436,7 +436,7 @@ Safari has long resisted the temptation to offer a reasonable command-line inter
   {"value":null}
   ```
 
-  This addresses all previous concerns, and seems to be the best as of 2025. The only downside is that it requires a bit more code to setup (find available port, and perform various HTTP requests).
+  This addresses all previous concerns, and seems to work best as of 2025. The only downside is that it requires more code to set up (find available port, and perform various HTTP requests).
 
   - https://webkit.org/blog/6900/webdriver-support-in-safari-10/
   - https://developer.apple.com/documentation/webkit/macos-webdriver-commands-for-safari-12-and-later

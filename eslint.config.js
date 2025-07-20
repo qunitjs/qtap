@@ -25,7 +25,7 @@ export default [
     }
   },
   {
-    files: ['test/*.js'],
+    files: ['test/**/*.js'],
     languageOptions: {
       globals: {
         QUnit: 'readonly'
@@ -33,6 +33,7 @@ export default [
     },
     ...qunitRecommended,
     rules: {
+      'no-var': 'off',
       'object-property-newline': 'off',
     }
   },

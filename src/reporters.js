@@ -2,6 +2,8 @@ import util from 'node:util';
 
 import yaml from 'yaml';
 
+import { shortenTestFileLabels } from './util.js';
+
 function dynamic (eventbus) {
   /**
    * @typedef {Object} ClientState
@@ -9,7 +11,6 @@ function dynamic (eventbus) {
    * @property {string} displayName
    * @property {string} status
    * @property {null|string} lastline
-   * @property {Array} failures
    */
 
   /** @type {Object<string,ClientState[]>} */
@@ -45,8 +46,7 @@ function dynamic (eventbus) {
       clientId: event.clientId,
       displayName: event.displayName,
       status: 'waiting',
-      lastline: null,
-      failures: []
+      lastline: null
     };
 
     clientsByFile[event.testFile] ??= [];
@@ -55,71 +55,300 @@ function dynamic (eventbus) {
     render();
   });
 
-  eventbus.on('online', (event) => {
+  eventbus.on('clientonline', (event) => {
     clientsById[event.clientId].status = 'progress';
     render();
   });
 
-  eventbus.on('bail', (event) => {
-    clientsById[event.clientId].status = 'failure';
-    clientsById[event.clientId].lastline = event.reason;
-    render();
-  });
-
-  eventbus.on('result', (event) => {
+  eventbus.on('clientresult', (event) => {
     clientsById[event.clientId].status = event.ok ? 'success' : 'failure';
     render();
   });
+
+  /*
+  const browserCount = (clients.size / testFiles.size);
+  let onlineMsg;
+  if (testFiles.size === 1 && browserCount === 1) {
+    onlineMsg = util.styleText('grey', `Running tests in ${client.browser}`);
+  } else if (testFiles.size === 1) {
+    onlineMsg = util.styleText('grey', `Running tests in ${browserCount} browsers`);
+  } else if (browserCount === 1) {
+    onlineMsg = util.styleText('grey', `Running ${testFiles.size} test files in ${client.browser}`);
+  } else {
+    onlineMsg = util.styleText('grey', `Running ${testFiles.size} test files in ${browserCount} browsers`);
+  }
+  */
 }
 
 function plain (eventbus) {
-  // Testing <file> in <browser>
-  // Testing N file(s) in N browser(s)
+  const WAIT_MSG_GRACE = 3000;
+  const TEST_MSG_GRACE = 1000;
 
-  eventbus.on('client', (event) => {
-    console.log(util.styleText('grey', `[${event.clientId}]`) + ` Opening ${event.testFile} in ${event.displayName}`);
-  });
-  eventbus.on('online', (event) => {
-    console.log(util.styleText('grey', `[${event.clientId}]`) + ' Running...');
-  });
-  eventbus.on('consoleerror', (event) => {
-    console.log(util.styleText('grey', `[${event.clientId}]`) + ' Console:\n' + util.styleText('yellow', event.message));
-  });
-  eventbus.on('bail', (event) => {
-    console.log(util.styleText('grey', `[${event.clientId}]`) + ` Error! ${event.reason}`);
-  });
-  eventbus.on('result', (event) => {
-    // TODO: Report wall-clock runtime
-    console.log(util.styleText('grey', `[${event.clientId}]`) + ` Finished! Ran ${event.total} tests, ${event.failed} failed.`);
+  const perfOrigin = performance.now();
 
-    if (event.skips.length) {
-      const minimalResults = event.skips.map((result) => {
-        return result.fullname;
-      });
-      console.log(util.styleText('cyan', `${minimalResults.length} Skipped:`));
-      console.log(yaml.stringify(minimalResults));
+  /**
+   * @typedef {Object} Client
+   * @property {string} clientId
+   * @property {string} testFile
+   * @property {string} browser
+   * @property {string} linePrefix
+   * @property {string[]} clientconsole Temporary buffer
+   * @property {number} completed Number of tests completed so far
+   * @property {any} waitMsgTimer
+   * @property {any} testMsgTimer
+   */
+  /** @type {Map<string,Client>} */
+  const clients = new Map();
+
+  // De-duplicated set of test files
+  const testFiles = new Set();
+
+  let browserCount;
+
+  function printAnyClientConsoleLines (client) {
+    // Print consecutive lines from the same client together instead of repeating the client prefix,
+    // to improve readability and reduce line length.
+    // These likely arrived in a batch as part of a single message (e.g. stack trace)
+    if (client.clientconsole.length) {
+      console.log(util.styleText('grey', client.linePrefix) + 'Console:\n' + util.styleText('yellow', client.clientconsole.join('\n')));
+      client.clientconsole.length = 0;
     }
-    if (event.todos.length) {
-      const minimalResults = event.todos.map((result) => {
-        return {
-          name: result.fullname,
-          diag: result.diag
-        };
-      });
-      console.log(util.styleText('yellow', `${minimalResults.length} Todos:`));
-      console.log(yaml.stringify(minimalResults));
+  }
+
+  function formatFailure (itemMarker = '', result, includeDiag, client, itemIndent) {
+    let ret = itemMarker + result.fullname;
+    if (includeDiag) {
+      /** @type {Object|undefined} */
+      const diag = result.diag;
+      if (diag) {
+        ret += '\n' + yaml.stringify(diag, { lineWidth: 0 })
+          .replace(/^/mg, itemIndent)
+          .replace(/^(\s*)([^:]+:)( )/mg, (_, pre, key, post) => pre + util.styleText('grey', key) + post);
+      }
+      if (client.clientconsole.length) {
+        ret += `\n${itemIndent}Console:\n` + util.styleText('yellow', itemIndent + client.clientconsole.join('\n' + itemIndent));
+        client.clientconsole.length = 0;
+      }
+
+      // TODO: Add support for diag.diff provided by test framework/reporter (e.g. QUnit 3.1).
+      // We'll need to pick out and unset diag.diff before yaml.stringify(diag)
+      // so that color codes work, because yaml.stringify would escape them,
+      // making the diff unreadable.
+      //
+      // TODO: Add support for fallback diff generated by QTap between actual/expected.
     }
-    if (event.failures.length) {
-      const minimalResults = event.failures.map((result) => {
-        return {
-          name: result.fullname,
-          diag: result.diag
-        };
-      });
-      console.log(util.styleText('red', `${minimalResults.length} Failures:`));
-      console.log(yaml.stringify(minimalResults));
+    return ret;
+  }
+
+  eventbus.on('clients', (event) => {
+    for (const clientId in event.clients) {
+      testFiles.add(event.clients[clientId].testFile);
+    }
+    browserCount = (Object.keys(event.clients).length / testFiles.size);
+
+    const shortened = shortenTestFileLabels(testFiles);
+    const shortLabelMax = (
+      (testFiles.size > 1
+        ? Math.max(
+          ...[...shortened.values()].map((shortLabel) => shortLabel.length)
+        )
+        : 0
+      )
+      + (browserCount > 1 && testFiles.size > 1 ? 1 : 0)
+      + (browserCount > 1
+        ? Math.max(
+          ...[...Object.values(event.clients)].map((clientEvent) => clientEvent.displayName.length)
+        )
+        : 0
+      )
+    );
+    const linePrefixPad = Math.min(38, shortLabelMax);
+
+    for (const clientId in event.clients) {
+      const clientEvent = event.clients[clientId];
+
+      const shortLabel = ''
+        + (testFiles.size > 1 ? shortened.get(clientEvent.testFile) : '')
+        + (browserCount > 1 && testFiles.size > 1 ? '@' : '')
+        + (browserCount > 1 ? clientEvent.displayName : '');
+
+      /** @type {Client} */
+      const client = {
+        clientId: clientId,
+        testFile: clientEvent.testFile,
+        browser: clientEvent.displayName,
+        linePrefix: shortLabel ? '[' + shortLabel.padEnd(linePrefixPad, ' ') + '] ' : '',
+        clientconsole: [],
+        completed: 0,
+        waitMsgTimer: null,
+        testMsgTimer: null,
+      };
+      clients.set(clientId, client);
+
+      client.waitMsgTimer = setTimeout(() => {
+        const line = util.styleText('grey', `${client.linePrefix}⠧ Waiting for browser to connect`);
+        console.log(line);
+      }, WAIT_MSG_GRACE);
     }
   });
+
+  eventbus.on('clientonline', (event) => {
+    const client = /** @type {Client} */ (clients.get(event.clientId));
+    clearTimeout(client.waitMsgTimer);
+
+    let line;
+    if (browserCount === 1) {
+      line = util.styleText('grey', `${client.linePrefix}⠧ Running tests in ${client.browser}`);
+    } else {
+      line = util.styleText('grey', `${client.linePrefix}⠧ Running tests...`);
+    }
+    console.log(line);
+  });
+
+  eventbus.on('clientconsole', (event) => {
+    const client = /** @type {Client} */ (clients.get(event.clientId));
+
+    client.clientconsole.push(event.message);
+  });
+
+  eventbus.on('assert', (event) => {
+    const client = /** @type {Client} */ (clients.get(event.clientId));
+
+    client.completed++;
+
+    if (event.ok) {
+      client.clientconsole.length = 0;
+      client.testMsgTimer ??= setTimeout(() => {
+        const line = util.styleText('grey', `${client.linePrefix}⠧ Ran ${client.completed} ${client.completed === 1 ? 'test' : 'tests'}...`);
+        console.log(line);
+        client.testMsgTimer = null;
+      }, TEST_MSG_GRACE);
+    } else {
+      clearTimeout(client.testMsgTimer);
+      client.testMsgTimer = null;
+      console.log('\n' + formatFailure(
+        util.styleText('grey', client.linePrefix) + util.styleText('red', '✘') + ' ',
+        event,
+        true,
+        client,
+        '  '
+      ));
+    }
+  });
+
+  const clientresults = {
+    skips: {},
+    todos: {}
+  };
+  eventbus.on('clientresult', (event) => {
+    const client = /** @type {Client} */ (clients.get(event.clientId));
+
+    clearTimeout(client.testMsgTimer);
+
+    if (event.skips?.length) {
+      clientresults.skips[event.clientId] = event.skips;
+    }
+    if (event.todos?.length) {
+      clientresults.todos[event.clientId] = event.todos;
+    }
+
+    if (event.ok) {
+      if (browserCount > 1) {
+        const line = util.styleText('grey', `${client.linePrefix}✔ Completed ${client.completed} ${client.completed === 1 ? 'test' : 'tests'}`);
+        console.log(line);
+      }
+    } else {
+      printAnyClientConsoleLines(client);
+    }
+  });
+
+  eventbus.on('finish', (event) => {
+    const durationSec = (performance.now() - perfOrigin) / 1000;
+    // Format 120ms > 0.1s, 450ms > 0.5s, 951ms > 1s, 2048ms > 2s
+    const durationFormatted = (
+      durationSec > 1 ? Math.floor(durationSec) : durationSec.toPrecision(1)
+    ) + 's';
+
+    formatSection(
+      (num) => util.styleText(['bgYellowBright'],
+        util.styleText('yellowBright', '__')
+        + util.styleText(['black', 'bold'], `${num} SKIPPED`)
+        + util.styleText('yellowBright', '__')
+      ),
+      clientresults.skips,
+      false
+    );
+
+    formatSection(
+      (num) => util.styleText(['bgCyanBright'],
+        util.styleText('cyanBright', '__')
+        + util.styleText(['black', 'bold'], `${num} TODOS`)
+        + util.styleText('cyanBright', '__')
+      ),
+      clientresults.todos
+    );
+
+    let statusLine;
+    if (event.ok) {
+      statusLine = util.styleText(['bgGreenBright'],
+        util.styleText('greenBright', '__')
+        + util.styleText(['black', 'bold'], '\u2714 DONE')
+        + util.styleText('greenBright', '__')
+      );
+    } else {
+      statusLine = util.styleText(['bgRedBright'],
+        util.styleText('redBright', '__')
+        + util.styleText(['whiteBright', 'bold'], `${event.failed} FAILURES`)
+        + util.styleText('redBright', '__')
+      );
+    }
+    console.log('\n' + statusLine + '\n');
+
+    const footerLine = `Completed ${event.total} tests in ${durationFormatted}`;
+    console.log(util.styleText('grey', footerLine));
+  });
+
+  eventbus.on('error', () => {
+    for (const client of clients.values()) {
+      clearTimeout(client.waitMsgTimer);
+      clearTimeout(client.testMsgTimer);
+      printAnyClientConsoleLines(client);
+    }
+  });
+
+  /**
+   * @param {Function} headingFn
+   * @param {Object} resultsByClient
+   * @param {boolean} includeDiag
+   */
+  function formatSection (headingFn, resultsByClient, includeDiag = true) {
+    let count = 0;
+    for (const clientId in resultsByClient) {
+      count += resultsByClient[clientId].length;
+    }
+    if (!count) {
+      return;
+    }
+
+    console.log('\n' + headingFn(count) + '\n');
+    let i = 0;
+    for (const clientId in resultsByClient) {
+      const client = /** @type {Client} */ (clients.get(clientId));
+
+      for (const result of resultsByClient[clientId]) {
+        i++;
+        const itemMarker = i + '. ';
+        const itemIndent = ' '.repeat(itemMarker.length);
+        console.log(formatFailure(
+          util.styleText('grey', itemMarker),
+          result,
+          includeDiag,
+          client,
+          itemIndent
+        ));
+      }
+    }
+  }
 }
 
 const isTTY = false; // process.stdout.isTTY && process.env.TERM !== 'dumb';
@@ -132,75 +361,9 @@ export default { none, minimal };
 // TODO: Add a 'tap' reporter, that merges and verbosely merges and forwards
 // all original tap lines. Test names prepended with "Test file in Browser > ".
 
-// TODO: Add an dynamic version of the 'minimal' reporter, falling back if no TTY.
-// The main value of this dynamic version would be to show failures right as
-// they come in, instead of only after a test run has finished.
 /*
 
-  Running /test/pass.html
-  * Firefox  ⠧ ok 3 Baz > another thing
-  * Chrome   ⠧ ok 1 Foo bar
-
-  ===============================================================
-
-  Running /test/pass.html
-  * Firefox  ✔ Ran 4 tests in 42ms
-  * Chrome   ✔ Completed 4 tests in 42ms
-
-  ===============================================================
-
-  Running /test/fail.html
-  * Firefox  ⠧ not ok 2 example > hello fail
-  * Chrome   ⠧ ok 1 Foo bar
-
-  There was 1 failure
-
-  1. Firefox - example > hello fail
-    ---
-    actual  : foo
-    expected: bar
-    ...
-
-  ===============================================================
-
-  Running /test/fail.html
-  * Firefox  ⠧ ok 3 Quux # update to next result, but with red spinner
-  * Chrome   ⠧ ok 3 Quux
-
-  There were 2 failures
-
-  1. Firefox - example > hello fail
-    ---
-    actual  : foo
-    expected: bar
-    ...
-
-  2. Chrome - example > hello fail
-    ---
-    actual  : foo
-    expected: bar
-    ...
-
-  ===============================================================
-
-  Running /test/fail.html
-  * Firefox  ✘ Ran 3 tests in 42ms (1 failed)
-  * Chrome   ✘ Completed 3 tests in 42ms (1 failed)
-  * Chrome   ✘ 1 failed test
-
-  There were 2 failures
-
-  1. Firefox - example > hello fail
-    ---
-    actual  : foo
-    expected: bar
-    ...
-
-  2. Chrome - example > hello fail
-    ---
-    actual  : foo
-    expected: bar
-    ...
+# Minimal reporter in dynamic mode (isTTY=true)
 
   ===============================================================
 
@@ -211,8 +374,8 @@ export default { none, minimal };
   ===============================================================
 
   Running /test/timeout.html
-  * Firefox  ? Test timed out after 30s of inactivity
-  * Chrome   ? Test timed out after 30s of inactivity
+  * Firefox  ✘ Timed out after 30s of inactivity
+  * Chrome   ✘ Timed out after 30s of inactivity
 
   ===============================================================
 
@@ -220,9 +383,13 @@ export default { none, minimal };
   * Firefox  ⢎ Waiting...
   * Chrome   ⢎ Waiting...
 
+  ===============================================================
+
   Running /test/connect-timeout.html
-  * Firefox  ? Browser did not start within 60s
-  * Chrome   ? Browser did not start within 60s
+  * Firefox  ✘ Browser did not start within 60s
+  * Chrome   ✘ Browser did not start within 60s after 3 retries.
+
+# Spinner
 
         "interval": 80,
         "frames": [

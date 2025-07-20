@@ -27,6 +27,19 @@
  * - https://github.com/tapjs/tap-finished/pull/2
  *   Upgrade from tap-parser@5 to tap-parser@18, so that QTap doesn't pull in the
  *   35 dependencies that tap-parser@5 carried to support old Node.js versions.
+ *
+ * - Add bailout as 'finished' trigger, to avoid a hanging process.
+ *
+ * - Fix hang when calling p.end() to close unfinished stream,
+ *   due to unreachable inner 'complete' event when calling finish()
+ *   from the outer 'complete' event (no memory, not fired twice).
+ *
+ *   This appears to be caused by [1] when switching finish() from `cb(p.results)`,
+ *   to `p.on('complete', cb)`.
+ *
+ * - Fix duplicate p.end() when wait=0 due to missing !ended check.
+ *
+ * [1]: https://github.com/tapjs/tap-finished/commit/35b653d778a4f387c269f6dfbe95066455636410
  */
 'use strict';
 
@@ -58,7 +71,7 @@ export default function tapFinished (opts, cb) {
     });
     if (opts.wait && !ended) {
       setTimeout(function () { p.end(); }, opts.wait);
-    } else { p.end(); }
+    } else if (!ended) { p.end(); }
   }
 
   function check () {
@@ -79,9 +92,15 @@ export default function tapFinished (opts, cb) {
     check();
   });
 
-  p.on('complete', function () {
+  p.on('bailout', function () {
     if (finished) { return; }
     finish();
+  });
+
+  p.on('complete', function () {
+    if (finished) { return; }
+    finished = true;
+    cb(p.results);
   });
 
   return p;

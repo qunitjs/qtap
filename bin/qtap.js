@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+import util from 'node:util';
+
 import { program, InvalidArgumentError } from 'commander';
 import qtap from '../src/qtap.js';
 
@@ -36,8 +38,8 @@ program
       + 'This is ignored when testing by URL instead of file.'
   )
   .option('--timeout <number>',
-    'The maximum timeout of any single test.\n'
-      + 'The test is stopped if it takes longer than this between results.',
+    'The maximum duration of a single unit test.\n'
+      + 'The test is stopped if the browser is idle longer than this between results.',
     function (val) {
       const num = Number(val);
       if (num < 0 || !Number.isFinite(num)) {
@@ -58,7 +60,11 @@ program
     },
     60
   )
-  .option('-r, --reporter <reporter>', 'One of "minimal", "dynamic", or "none".', 'minimal')
+  .option('-r, --reporter <reporter>',
+    'Set one or more reporters.\n'
+      + 'Available: "minimal", "dynamic", "none", or a custom reporter.',
+    'minimal'
+  )
   .option('-w, --watch', 'Watch files for changes and re-run the test suite.')
   .option('-d, --debug', 'Enable debug mode. This keeps the browser open,\n'
       + 'and for local browsers it will launch visibly instead of headless.')
@@ -90,7 +96,37 @@ if (opts.version) {
     });
     process.exit(result.exitCode);
   } catch (e) {
-    console.error(e);
+    console.log(
+      '\n'
+      + util.styleText('bgRedBright',
+        util.styleText('redBright', '__')
+        + util.styleText(['whiteBright', 'bold'], 'ERROR')
+        + util.styleText('redBright', '__')
+      )
+      + '\n'
+    );
+    if (e instanceof qtap.QTapError && e.qtapClient) {
+      console.error(util.styleText('grey',
+        `Bail out from ${e.qtapClient.testFile} in ${e.qtapClient.browser}:`
+      ));
+    }
+    if (e instanceof qtap.QTapError) {
+      // Omit internal stack trace for QTapError, not relevant to end-users,
+      // by printing `e.toString()` instead of `e`.
+      //
+      // Omit internal "BrowserStopSignal" prefix from messages.
+      const message = e.name === 'BrowserStopSignal' ? e.message : e.toString();
+      // Bold first line, grey the rest
+      // "foo"               > "<b>foo</b>"
+      // "foo \n bar \n baz" > "<b>foo</b> \n <grey>bar \n baz</grey>"
+      const formatted = message
+        .replace(/^.+?$/m, (m) => util.styleText('bold', m))
+        .replace(/\n(^.+)$/ms, (m, rest) => '\n' + util.styleText('grey', rest));
+      console.error(formatted);
+    } else {
+      // Print including full stack trace
+      console.error(e);
+    }
     process.exit(1);
   }
 }

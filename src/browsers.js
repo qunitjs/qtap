@@ -118,7 +118,7 @@ async function firefox (url, signals, logger, debugMode) {
   const profileDir = LocalBrowser.makeTempDir(signals, logger);
   const args = [url, '-profile', profileDir, '-no-remote', '-wait-for-browser'];
   if (!debugMode) {
-    firefox.displayName = 'Headless Firefox';
+    firefox.displayName = 'Firefox Headless';
     args.push('-headless');
   }
 
@@ -164,7 +164,7 @@ firefox.displayName = 'Firefox';
 function makeChromium (displayName, getPaths) {
   /** @type {Browser} - https://github.com/microsoft/TypeScript/issues/22063 */
   const chromium = async function (url, signals, logger, debugMode) {
-    chromium.displayName = debugMode ? displayName : `Headless ${displayName}`;
+    chromium.displayName = debugMode ? displayName : `${displayName} Headless`;
     // https://github.com/GoogleChrome/chrome-launcher/blob/main/docs/chrome-flags-for-tools.md
     const dataDir = LocalBrowser.makeTempDir(signals, logger);
     const args = [
@@ -215,8 +215,6 @@ const detect = async function (url, signals, logger, debugMode) {
 };
 
 export default {
-  LocalBrowser,
-
   detect,
   firefox,
   chrome,

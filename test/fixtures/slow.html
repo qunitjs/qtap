@@ -7,11 +7,13 @@ delay(500, () => {
   console.log('TAP version 13');
   delay(500, () => {
     console.log('ok 1 Foo');
-    console.log('ok 2 Bar > this thing');
-    delay(1500, () => {
+    delay(500, () => {
+      console.log('ok 2 Bar > this thing');
       console.log('ok 3 Bar > another thing');
-      console.log('ok 4 Quux');
-      console.log('1..4');
+      delay(1000, () => {
+        console.log('ok 4 Quux');
+        console.log('1..4');
+      });
     });
   });
 });

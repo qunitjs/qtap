@@ -155,70 +155,77 @@ async function mybrowser (url, signals) {
 }
 ```
 
-## QTap basic events
+## QTap summary events
+
+These are emitted at most once for the run overall.
+
+### Event: `'clients'`
+
+The `clients` event conveys which browsers are being started, and which tests will be run. It is emitted as soon as QTap has validated the parameters. Each client is a browser process that runs one test suite. For example, if you run 2 test suites in 3 different browsers, there will be 6 clients.
+
+* `event.clients {Object<string,Object>}` Keyed by clientId
+  * `clientId {string}` An identifier unique within the current qtap process (e.g. `client_123`).
+  * `testFile {string}` Relative file path or URL (e.g. `test/index.html` or `http://localhost/test/`).
+  * `browserName {string}` Browser name, as specified in config or CLI (e.g. `firefox`).
+  * `displayName {string}` Browser pretty name (e.g. "Headless Firefox").
 
 ### Event: `'error'`
 
-* `error <Error|string>`
+* `error {Error|string}`
 
 ### Event: `'finish'`
 
-Summary event that is ideal for when you run one test suite in one browser, or if you otherwise don't need a break down of results by client.
+Summary event based on the `clientresult` events. This is mutually exclusive with `error`.
 
-* `event.ok <boolean>` Aggregate status of each client's results. If any failed, this is false.
-* `event.exitCode <number>` Suggested exit code, 0 for success, 1 for failed.
-* `event.total <number>` Aggregated from `result` events.
-* `event.passed <number>` Aggregated from `result` events.
-* `event.failed <number>` Aggregated from `result` events.
-* `event.skips <array>` Carried from the first client that failed, or empty.
-* `event.todos <array>` Carried from the first client that failed, or empty.
-* `event.failures <array>` Carried from the first client that failed, or empty.
-* `event.bailout <false|string>` Carried from the first client that failed, or false.
+* `event.ok {boolean}` Aggregate status of each client's results. If any failed or bailed, this is false.
+* `event.exitCode {number}` Suggested exit code, 0 for success, 1 for failed or bailed.
+* `event.total {number}` Aggregated from `clientresult` events.
+* `event.passed {number}` Aggregated from `clientresult` events.
+* `event.failed {number}` Aggregated from `clientresult` events.
 
-## QTap reporter events
+## QTap client events
 
-A client will emit each of these events only once, except `consoleerror` which may be emitted any number of times.
+These are emitted once per client, except `clientconsole` and `clientassert` which may be emitted many times by a client during a test run.
 
-### Event: `'client'`
+### Event: `'clientonline'`
 
-The `client` event is emitted when a client is created. A client is a dedicated browser instance that runs one test suite. For example, if you run 2 test suites in 3 different browsers, there will be 6 clients.
+The `clientonline` event is emitted when a browser has successfully started and opened the test file. If a browser fails to start or connect, then the `error` event is emitted instead.
 
-* `event.clientId <string>` An identifier unique within the current qtap process (e.g. `client_123`).
-* `event.testFile <string>` Relative file path or URL (e.g. `test/index.html` or `http://localhost/test/`).
-* `event.browserName <string>` Browser name, as specified in config or CLI (e.g. `firefox`).
-* `event.displayName <string>` Browser pretty name, (e.g. "Headless Firefox").
+* `event.clientId {string}`
+* `event.testFile {string}`
+* `event.browserName {string}`
+* `event.displayName {string}`
 
-### Event: `'online'`
+### Event: `'clientresult'`
 
-The `online` event is emitted when a browser has successfully started and opened the test file. If a browser fails to connect, a `bail` event is emitted instead.
+The `clientresult` event is emitted when a browser has completed a test run. This includes if it bailed mid-run, such as when a test run times out.
 
-* `event.clientId <string>`
+* `event.clientId {string}`
+* `event.ok {boolean}`
+* `event.total {number}`
+* `event.passed {number}`
+* `event.failed {number}`
+* `event.skips {array}` Details about skipped tests (count as passed).
+* `event.todos {array}` Details about todo tests (count as passed).
+* `event.failures {array}` Details about failed tests.
+* `event.bailout {false|string}`
 
-### Event: `'result'`
+### Event: `'clientconsole'`
 
-The `result` event is emitted when a browser has completed a test run. This is mutually exclusive with the `bail` event.
+The `clientconsole` event relays any warnings and uncaught errors from the browser console. These are for debug purposes only, and do not cause a test run to fail per-se. A complete and successful test run, may nonetheless print warnings or errors to the console.
 
-* `event.clientId <string>`
-* `event.ok <boolean>`
-* `event.total <number>`
-* `event.passed <number>`
-* `event.failed <number>`
-* `event.skips <array>` Details about skipped tests (count as passed).
-* `event.todos <array>` Details about todo tests (count as passed).
-* `event.failures <array>` Details about failed tests.
+Note that test frameworks such as QUnit may catch global errors during a test
 
-### Event: `'bail'`
+It is recommended that reporters only display console errors if a test run failed (i.e. there was a failed test result, or an uncaught error).
 
-The `bail` event is emitted when a browser was unable to start or complete a test run.
+* `event.clientId {string}`
+* `event.message {string}`
 
-* `event.clientId <string>`
-* `event.reason <string>`
+### Event: `'assert'`
 
-### Event: `'consoleerror'`
+The `assert` event describes a single test result (whether passing or failing). This can be used by reporters to indicate activity, display the name of a test in real-time, or to convey failures early.
 
-The `consoleerror` event relays any warning or error messages from the browser console. These are for debug purposes only, and do not indicate that a test has failed. A complete and successful test run, may nonetheless print warnings or errors to the console.
-
-It is recommended that reporters only display console errors if a test run failed (i.e. there was a failed test result, or the cilent bailed).
-
-* `event.clientId <string>`
-* `event.message <string>`
+* `event.clientId {string}`
+* `event.ok {boolean}`
+* `event.fullname {string}`
+* `event.diag {undefined|Object}`
