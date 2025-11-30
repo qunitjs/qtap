@@ -444,6 +444,7 @@ class ControlServer {
 
       try {
         await this.launchBrowserAndConnect(browserFn, browser, signals);
+        logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
       } catch (e) {
         // Handle util.BrowserConnectTimeout from launchBrowserAndConnect
         //
@@ -538,9 +539,7 @@ class ControlServer {
       })
       .catch(/** @type {Error|Object|string} */ e => {
         // Silence any errors from browserFn that happen after we called browser.stop().
-        if (signals.browser.aborted) {
-          browser.logger.debug('browser_launch_stopped', String(e.cause || e));
-        } else {
+        if (!signals.browser.aborted) {
           browser.logger.warning('browser_launch_error', e);
           browser.stop(e);
           throw e;
@@ -574,7 +573,6 @@ class ControlServer {
         this.eventbus.on('clientonline', (event) => {
           if (event.clientId === browser.clientId) {
             clearTimeout(connectTimeoutTimer);
-            browser.logger.debug('browser_connected', `${browser.getDisplayName()} connected! Serving test file.`);
             resolve(null);
           }
         });
