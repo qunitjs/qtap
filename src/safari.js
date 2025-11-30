@@ -1,5 +1,5 @@
 import which from 'which';
-import { LocalBrowser, CommandNotFoundError } from './util.js';
+import { LocalBrowser, QTapError, CommandNotFoundError } from './util.js';
 /** @import { Logger } from './qtap.js' */
 
 async function delay (wait) {
@@ -83,7 +83,7 @@ async function safariOne (url, signals, logger) {
     /** @type {any} */
     const data = await resp.json();
     if (!resp.ok) {
-      throw `HTTP ${resp.status} ${data?.value?.error}, ${data?.value?.message || ''}`;
+      throw `${data?.value?.message || ''}\nHTTP ${resp.status} ${data?.value?.error}`;
     }
     return data.value;
   }
@@ -109,7 +109,7 @@ async function safariOne (url, signals, logger) {
         continue;
       }
       logger.warning('safaridriver_session_error', e);
-      throw new Error('Failed to create new session');
+      throw new QTapError((e.message || e) + '\nFailed to create a Safari session.');
     }
   }
 
