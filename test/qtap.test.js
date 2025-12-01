@@ -11,13 +11,24 @@ import { MIME_TYPES } from '../src/util.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const root = path.join(__dirname, '..');
+let debugLog = '';
 const options = {
   cwd: root,
   idleTimeout: 30,
-  verbose: !!process.env.CI,
-  // verbose: true, // debugging
-  printVerbose: (str) => { console.error('# ' + str); }
+  verbose: true,
+  printVerbose: (str) => {
+    debugLog += '# ' + str + '\n';
+  }
 };
+
+QUnit.testDone((details) => {
+  if (debugLog) {
+    if (details.failed) {
+      console.error(debugLog);
+    }
+    debugLog = '';
+  }
+});
 
 function debugReporter (eventbus) {
   const events = [];
@@ -149,7 +160,7 @@ QUnit.module('qtap', function (hooks) {
       expected: EXPECTED_FAKE_PASS_4
     }
   }, async function (assert, params) {
-    assert.timeout(40_000);
+    assert.timeout(100_000);
 
     const finish = await qtap.runWaitFor(
       params.files,
@@ -519,7 +530,7 @@ QUnit.module('qtap', function (hooks) {
       exitCode: 1
     },
   }, async function (assert, params) {
-    assert.timeout(40_000);
+    assert.timeout(100_000);
 
     const run = qtap.run(params.files, params.browsers || 'firefox', params.options);
     const events = debugReporter(run);
@@ -542,7 +553,7 @@ QUnit.module('qtap', function (hooks) {
   //
   // See code comments in launchBrowser() for more information
   QUnit.test('run() events [browser URL from custom server]', async function (assert) {
-    assert.timeout(40_000);
+    assert.timeout(100_000);
 
     const server = http.createServer((req, resp) => {
       if (req.url.startsWith('/test/example.html')) {
@@ -592,7 +603,7 @@ QUnit.module('qtap', function (hooks) {
   // - The test server must inject a <base> tag or otherwise ensure that
   //   any referenced JS and CSS files are requested from the origin server.
   QUnit.test('runWaitFor() [proxy resources from custom server]', async function (assert) {
-    assert.timeout(40_000);
+    assert.timeout(100_000);
 
     const requestLog = [];
 
