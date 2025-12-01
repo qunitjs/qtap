@@ -20,6 +20,10 @@ jobs:
             os: ubuntu-24.04
             node: 22.x
 
+          - name: "Linux: Node 24"
+            os: ubuntu-24.04
+            node: 24.x
+
           # Includes Firefox, Google Chrome, Microsoft Edge
           # https://github.com/actions/runner-images/blob/win22/20241211.1/images/windows/Windows2022-Readme.md
           - name: "Windows: Node 22"
