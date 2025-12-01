@@ -672,6 +672,14 @@ class ControlServer {
     // tapParser.on('plan', logger.debug.bind(logger, 'browser_tap_plan'));
 
     browser.tapParser = tapParser;
+    // It is valid for connectTimeout to be more or equal than idleTimeout.
+    // These two should be treated separately and not overlapping, as otherwise
+    // a slow launch or retried launch would eat from the first test's idleTimeout
+    // and the browser could timeout before it begins.
+    //
+    // We treat 'clientonline' as the first message received from the browser,
+    // and start counting idleTimeout only after that. .
+    browser.lastReceived = performance.now();
 
     // Optimization: The naive approach would be to clearTimeout+setTimeout on every tap line,
     // in `handleTap()` or `tapParser.on('line')`. But that adds significant overhead from
