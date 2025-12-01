@@ -27,9 +27,9 @@ jobs:
             node: 22.x
 
           # Includes Firefox, Google Chrome, Microsoft Edge, Safari
-          # https://github.com/actions/runner-images/blob/macos-13/20241216.479/images/macos/macos-13-Readme.md
+          # https://github.com/actions/runner-images/blob/macos-15-arm64/20251104.0104/images/macos/macos-15-arm64-Readme.md
           - name: "macOS: Node 22"
-            os: macos-13
+            os: macos-latest
             node: 22.x
 
     name: ${{ matrix.name }}
