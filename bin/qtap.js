@@ -123,6 +123,10 @@ if (opts.version) {
         .replace(/^.+?$/m, (m) => util.styleText('bold', m))
         .replace(/\n(^.+)$/ms, (m, rest) => '\n' + util.styleText('grey', rest));
       console.error(formatted);
+
+      if (e.cause) {
+        console.error(util.styleText('grey', String(e.cause?.message)));
+      }
     } else {
       // Print including full stack trace
       console.error(e);

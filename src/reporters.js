@@ -4,87 +4,50 @@ import yaml from 'yaml';
 
 import { shortenTestFileLabels } from './util.js';
 
-function dynamic (eventbus) {
-  /**
-   * @typedef {Object} ClientState
-   * @property {string} clientId
-   * @property {string} displayName
-   * @property {string} status
-   * @property {null|string} lastline
-   */
-
-  /** @type {Object<string,ClientState[]>} */
-  const clientsByFile = Object.create(null);
-  /** @type {Object<string,ClientState>} */
-  const clientsById = Object.create(null);
-
-  let screen = '';
-
-  function render () {
-    const icons = { waiting: '⢎', progress: '⠧', success: '✔', failure: '✘' };
-    let str = '';
-    for (const testFile in clientsByFile) {
-      str += `\nRunning ${testFile}\n`;
-      for (const client of clientsByFile[testFile]) {
-        str += `* ${client.displayName} ${icons[client.status]} ${client.lastline || ''}\n`;
-      }
-    }
-
-    if (screen) {
-      const oldHeight = screen.split('\n').length;
-      for (let i = 1; i < oldHeight; i++) {
-        process.stdout.write('\x1b[A\x1b[K');
-      }
-    }
-
-    process.stdout.write(str);
-    screen = str;
-  }
-
-  eventbus.on('client', (event) => {
-    const client = {
-      clientId: event.clientId,
-      displayName: event.displayName,
-      status: 'waiting',
-      lastline: null
-    };
-
-    clientsByFile[event.testFile] ??= [];
-    clientsByFile[event.testFile].push(client);
-    clientsById[event.clientId] = client;
-    render();
-  });
-
-  eventbus.on('clientonline', (event) => {
-    clientsById[event.clientId].status = 'progress';
-    render();
-  });
-
-  eventbus.on('clientresult', (event) => {
-    clientsById[event.clientId].status = event.ok ? 'success' : 'failure';
-    render();
-  });
-
-  /*
-  const browserCount = (clients.size / testFiles.size);
-  let onlineMsg;
-  if (testFiles.size === 1 && browserCount === 1) {
-    onlineMsg = util.styleText('grey', `Running tests in ${client.browser}`);
-  } else if (testFiles.size === 1) {
-    onlineMsg = util.styleText('grey', `Running tests in ${browserCount} browsers`);
-  } else if (browserCount === 1) {
-    onlineMsg = util.styleText('grey', `Running ${testFiles.size} test files in ${client.browser}`);
-  } else {
-    onlineMsg = util.styleText('grey', `Running ${testFiles.size} test files in ${browserCount} browsers`);
-  }
-  */
+function dynamic (_eventbus) {
+// const icons = { waiting: '⢎', progress: '⠧', success: '✔', failure: '✘' };
+// "interval": 80,
+// "frames": [
+//     "⠋",
+//     "⠙",
+//     "⠹",
+//     "⠸",
+//     "⠼",
+//     "⠴",
+//     "⠦",
+//     "⠧",
+//     "⠇",
+//     "⠏"
+// ]
+// "frames": [
+//     "⢎ ",
+//     "⠎⠁",
+//     "⠊⠑",
+//     "⠈⠱",
+//     " ⡱",
+//     "⢀⡰",
+//     "⢄⡠",
+//     "⢆⡀"
+// ]
+//   let screen = '';
+//   function render () {
+//     let str = '';
+//     if (screen) {
+//       const oldHeight = screen.split('\n').length;
+//       for (let i = 1; i < oldHeight; i++) {
+//         process.stdout.write('\x1b[A\x1b[K');
+//       }
+//     }
+//     process.stdout.write(str);
+//     screen = str;
+//   }
 }
 
 function plain (eventbus) {
   const WAIT_MSG_GRACE = 3000;
   const TEST_MSG_GRACE = 1000;
 
-  const perfOrigin = performance.now();
+  let perfOrigin;
 
   /**
    * @typedef {Object} Client
@@ -196,6 +159,8 @@ function plain (eventbus) {
     const client = /** @type {Client} */ (clients.get(event.clientId));
     clearTimeout(client.waitMsgTimer);
 
+    perfOrigin ??= performance.now();
+
     let line;
     if (browserCount === 1) {
       line = util.styleText('grey', `${client.linePrefix}⠧ Running tests in ${client.browser}`);
@@ -226,7 +191,7 @@ function plain (eventbus) {
     } else {
       clearTimeout(client.testMsgTimer);
       client.testMsgTimer = null;
-      console.log('\n' + formatFailure(
+      console.log(formatFailure(
         util.styleText('grey', client.linePrefix) + util.styleText('red', '✘') + ' ',
         event,
         true,
@@ -256,6 +221,12 @@ function plain (eventbus) {
       if (browserCount > 1) {
         const line = util.styleText('grey', `${client.linePrefix}✔ Completed ${client.completed} ${client.completed === 1 ? 'test' : 'tests'}`);
         console.log(line);
+      } else {
+        if (client.testMsgTimer) {
+          client.testMsgTimer = null;
+          const line = util.styleText('grey', `${client.linePrefix}⠧ Ran ${client.completed} ${client.completed === 1 ? 'test' : 'tests'}...`);
+          console.log(line);
+        }
       }
     } else {
       printAnyClientConsoleLines(client);
@@ -312,6 +283,7 @@ function plain (eventbus) {
     for (const client of clients.values()) {
       clearTimeout(client.waitMsgTimer);
       clearTimeout(client.testMsgTimer);
+      client.testMsgTimer = null;
       printAnyClientConsoleLines(client);
     }
   });
@@ -340,7 +312,7 @@ function plain (eventbus) {
         const itemMarker = i + '. ';
         const itemIndent = ' '.repeat(itemMarker.length);
         console.log(formatFailure(
-          util.styleText('grey', itemMarker),
+          util.styleText('grey', itemMarker + client.linePrefix),
           result,
           includeDiag,
           client,
@@ -367,51 +339,36 @@ export default { none, minimal };
 
   ===============================================================
 
-  Running /test/timeout.html
-  * Firefox  ⠧ ok 2 Baz > this thing
-  * Chrome   ⠧ ok 1 Foo bar
+  $ qtap test/fixtures/pass.html
+  [Firefox Headless] ⠧ ok 2 Baz > this thing
+  [Chrome Headless ] ⠧ ok 1 Foo bar
 
   ===============================================================
 
-  Running /test/timeout.html
-  * Firefox  ✘ Timed out after 30s of inactivity
-  * Chrome   ✘ Timed out after 30s of inactivity
-
-  ===============================================================
-
-  Running /test/connect-timeout.html
-  * Firefox  ⢎ Waiting...
-  * Chrome   ⢎ Waiting...
+  $ qtap --timeout 3 test/fixtures/timeout.html
+  [Firefox Headless] ✘ Test timed out after 30s
+  [Chrome Headless ] ✘ Test timed out after 30s
 
   ===============================================================
 
   Running /test/connect-timeout.html
-  * Firefox  ✘ Browser did not start within 60s
-  * Chrome   ✘ Browser did not start within 60s after 3 retries.
+  $ bin/qtap.js -c test/fixtures/qtap.config.js -b fakeRefuse test/fixtures/pass.html
+  [Firefox Headless] ⢎ Waiting for browser to connect...
+  [Chrome Headless ] ⢎ Waiting for browser to connect...
 
-# Spinner
+  ===============================================================
 
-        "interval": 80,
-        "frames": [
-            "⠋",
-            "⠙",
-            "⠹",
-            "⠸",
-            "⠼",
-            "⠴",
-            "⠦",
-            "⠧",
-            "⠇",
-            "⠏"
-        ]
-        "frames": [
-            "⢎ ",
-            "⠎⠁",
-            "⠊⠑",
-            "⠈⠱",
-            " ⡱",
-            "⢀⡰",
-            "⢄⡠",
-            "⢆⡀"
-        ]
+  $ bin/qtap.js -c test/fixtures/qtap.config.js --connect-timeout 3 -b fakeRefuse test/fixtures/pass.html
+  ✘ Browser did not start within 6s
+
+  $ bin/qtap.js -c test/fixtures/qtap.config.js --connect-timeout 3 -b fakeLazy test/fixtures/fake_pass_4.txt
+  ⠧ Waiting for browser to connect
+  ⠧ Running tests in fakeLazy
+  ✔ Completed 4 tests
+
+  ===============================================================
+
+  $ qtap -c test/fixtures/qtap.config.js -b fakeRefuseAlways test/fixtures/pass.html
+  ✘ Browser did not start within 60s after 3 attempts.
+
 */

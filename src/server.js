@@ -195,7 +195,7 @@ class ControlServer {
         body = (await fsPromises.readFile(file)).toString();
       } catch (e) {
         // @ts-ignore - TypeScript @types/node lacks `Error(,options)`
-        throw new Error('Could not open ' + this.testFile, { cause: e });
+        throw new util.QTapError('Could not open ' + this.testFile, { cause: e });
       }
     }
 
@@ -461,9 +461,12 @@ class ControlServer {
           controller = new AbortController();
           continue;
         }
+        if (e instanceof util.BrowserConnectTimeout && maxTries > 1) {
+          throw new util.BrowserConnectTimeout(`Browser did not start within ${this.connectTimeout}s after ${i} attempts`);
+        }
         if (e instanceof util.QTapError) {
           e.qtapClient = {
-            browser: browserFn.displayName,
+            browser: browser.getDisplayName(),
             testFile: this.testFile
           };
         }
@@ -476,7 +479,7 @@ class ControlServer {
       } catch (e) {
         if (e instanceof util.QTapError) {
           e.qtapClient = {
-            browser: browserFn.displayName,
+            browser: browser.getDisplayName(),
             testFile: this.testFile
           };
         }

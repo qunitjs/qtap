@@ -195,6 +195,8 @@ export function shortenTestFileLabels (testFiles) {
 
 export class QTapError extends Error {
   name = 'Error';
+  /** @type {null|Error} */
+  cause = null;
   /** @type {null|Object} */
   qtapClient = null;
 }

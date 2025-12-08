@@ -366,7 +366,7 @@ QUnit.module('qtap', function (hooks) {
       },
       expected: [
         'online: running notfound.html',
-        'error: Error: Could not open notfound.html',
+        'error: Could not open notfound.html',
       ],
       exitCode: null
     },
