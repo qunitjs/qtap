@@ -143,6 +143,14 @@ async function fakeRefuse (_url, signals) {
 }
 fakeRefuse.allowRetries = false;
 
+async function fakeRefuseAlways (_url, signals) {
+  await new Promise((resolve, reject) => {
+    signals.browser.addEventListener('abort', () => {
+      reject('You may retry but I will never connect.');
+    });
+  });
+}
+
 const snoozeByFile = {};
 async function fakeLazy (url, signals, logger) {
   const path = new URL(url).pathname;
@@ -176,6 +184,7 @@ export default {
     fakeFailAsync,
     fakeSlowFail,
     fakeRefuse,
+    fakeRefuseAlways,
     fakeLazy,
   },
   reporters: {
