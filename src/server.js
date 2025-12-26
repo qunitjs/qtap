@@ -91,6 +91,7 @@ class ControlServer {
     this.idleTimeout = options.idleTimeout;
     this.connectTimeout = options.connectTimeout;
     this.debugMode = options.debugMode;
+    this.debugBrowserProcesses = [];
 
     this.launchingBrowsers = new Set();
     this.browsers = new Map();
@@ -429,18 +430,6 @@ class ControlServer {
         browser: AbortSignal.any([controller.signal, globalSignal]),
         global: globalSignal
       };
-      if (this.debugMode) {
-        // Keep the browser open by replacing with a dummy signal that we never invoke.
-        //
-        // TODO: Refactor reporting and process mgmt so that results are reported
-        // on the CLI as normal. Right now, once the test finishes, the CLI doesn't
-        // report it because it waits to report until the browser exits. We need
-        // to create a way to keep report the results yet keep the process open.
-        signals.browser = (new AbortController()).signal;
-        signals.browser.addEventListener('abort', () => {
-          logger.warning('browser_signal_debugging', 'Keeping browser open for debugging');
-        });
-      }
 
       try {
         await this.launchBrowserAndConnect(browserFn, browser, signals);
@@ -457,7 +446,10 @@ class ControlServer {
           i++;
           this.logger.debug('browser_connect_retry', `Retrying, attempt ${i} of ${maxTries}`);
           // Give up on the timed-out attempt and reset controller for the next attempt
-          controller.abort(e);
+          if (!this.debugMode) {
+            logger.warning('browser_signal_debugging', 'Keeping timed-out browser process alive for debugging');
+            controller.abort(e);
+          }
           controller = new AbortController();
           continue;
         }
@@ -477,6 +469,11 @@ class ControlServer {
         await this.getClientResult(browser, signals);
         break;
       } catch (e) {
+        if (e instanceof util.BrowserStopSignal && this.debugMode) {
+          // Ignore "Browser ended unexpectedly" for a manual close when debugging
+          logger.debug('browser_signal_debugging', 'Ignore unexpected end when debugging');
+          return;
+        }
         if (e instanceof util.QTapError) {
           e.qtapClient = {
             browser: browser.getDisplayName(),
@@ -527,20 +524,38 @@ class ControlServer {
     // rejection. E.g. when throwing in a reporter from on('clients').
     this.launchingBrowsers.add(browser.clientId);
     browser.logger.debug('browser_launch_call');
-    browser.browserProcessPromise = browserFn(url, signals, browser.logger, this.debugMode)
+    const signalsForBrowserFn = { ...signals };
+    if (this.debugMode) {
+      // Pass a dummy signal that we never invoke (not even during global cleanup, to debug crashes)
+      signalsForBrowserFn.browser = (new AbortController()).signal;
+
+      signals.browser.addEventListener('abort', () => {
+        browser.logger.warning('browser_signal_debugging', 'Keeping browser open for debugging');
+      });
+    }
+    const rawBrowserProcessPromise = browserFn(url, signalsForBrowserFn, browser.logger, this.debugMode);
+
+    // Optimization: TODO: Document the fast path
+    browser.browserProcessPromise = Promise.race([
+      rawBrowserProcessPromise,
+      new Promise((resolve) => {
+        signals.browser.addEventListener('abort', () => {
+          if (signals.browser.reason instanceof util.BrowserStopSignal) {
+            browser.logger.debug('browser_signal_race', 'Fast path');
+            resolve();
+          }
+        });
+      })
+    ])
       .then(() => {
         // Usually browserFn() will return because we asked via browser.stop() when tests finished
         // or timed out. If the browser ended by itself, report is as an error.
-        // We re-use browser.stop() here because it also invokes the abort signal. That seems
-        // redundant after the process has exited, but it ensures all resources created by
-        // browserFn are cleaned up.
         if (signals.browser.aborted) {
           browser.logger.debug('browser_launch_exit');
         } else {
           throw new util.BrowserStopSignal('Browser ended unexpectedly');
         }
-      })
-      .catch(/** @type {Error|Object|string} */ e => {
+      }, /** @type {Error|Object|string} */ e => {
         // Silence any errors from browserFn that happen after we called browser.stop().
         if (!signals.browser.aborted) {
           browser.logger.warning('browser_launch_error', e);
@@ -548,6 +563,10 @@ class ControlServer {
           throw e;
         }
       });
+
+    if (this.debugMode) {
+      this.debugBrowserProcesses.push(rawBrowserProcessPromise);
+    }
 
     // The Promise.race call takes care of three things:
     //

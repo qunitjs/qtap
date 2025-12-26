@@ -94,6 +94,8 @@ if (opts.version) {
       debugMode: opts.debug || (process.env.QTAP_DEBUG === '1'),
       verbose: opts.verbose,
     });
+    // TODO: Figure out how to wait for browser process promises in debug mode, while
+    // keeping 'finish' event and CLI reporting not delayed by browser shutdown in regular mode
     process.exit(result.exitCode);
   } catch (e) {
     console.log(

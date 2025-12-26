@@ -287,6 +287,13 @@ function run (files, browserNames = 'detect', runOptions = {}) {
 
     logger.debug('event_finish', finish);
     eventbus.emit('finish', finish);
+
+    if (options.debugMode) {
+      console.log('\nKeeping browser open for debugging');
+      for (const server of servers) {
+        await Promise.all(server.debugBrowserProcesses);
+      }
+    }
   })();
   runPromise
     .finally(() => {
@@ -303,7 +310,7 @@ function run (files, browserNames = 'detect', runOptions = {}) {
       globalController.abort();
     })
     .catch((error) => {
-      logger.debug('runpromise_catch');
+      logger.warning('runpromise_catch', error);
       // Node.js automatically ensures users cannot forget to listen for the 'error' event.
       // For this reason, runWaitFor() is a separate method, because that converts the
       // 'error' event into a rejected Promise. If we created that Promise as part of run()
