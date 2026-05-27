@@ -73,9 +73,9 @@ QUnit.module('structure', function () {
     const directDeps = Object.keys(lock.packages[''].dependencies);
     const allDeps = await resolveDeps(lock, '');
 
-    assert.strictEqual(directDeps.length, 4, 'upto 5 direct dependencies');
+    assert.strictEqual(directDeps.length, 3, 'upto 5 direct dependencies');
     assert.deepEqual(allDeps, {
-      _total: '248 KiB',
+      _total: '238 KiB',
       commander: {
         packageSize: '47 KiB'
       },
@@ -95,14 +95,6 @@ QUnit.module('structure', function () {
                 packageSize: '7 KiB'
               }
             }
-          }
-        }
-      },
-      which: {
-        packageSize: '3 KiB',
-        dependencies: {
-          isexe: {
-            packageSize: '7 KiB'
           }
         }
       },

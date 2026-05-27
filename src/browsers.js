@@ -3,7 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import which from 'which';
+import which from './which.js';
 import safari from './safari.js';
 import { concatGenFn, CommandNotFoundError, LocalBrowser } from './util.js';
 /** @import { Logger, Browser } from './qtap.js' */
@@ -41,7 +41,7 @@ function * getFirefoxPaths () {
   //
   // Example: /usr/bin/firefox
   yield process.env.FIREFOX_BIN;
-  yield which.sync('firefox', { nothrow: true });
+  yield which('firefox');
 
   if (process.platform === 'darwin') {
     const appPath = '/Applications/Firefox.app/Contents/MacOS/firefox';
@@ -56,8 +56,8 @@ function * getFirefoxPaths () {
 
 function * getChromePaths () {
   yield process.env.CHROME_BIN;
-  yield which.sync('google-chrome', { nothrow: true });
-  yield which.sync('google-chrome-stable', { nothrow: true });
+  yield which('google-chrome');
+  yield which('google-chrome-stable');
 
   if (process.platform === 'darwin') {
     const appPath = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
@@ -73,8 +73,8 @@ function * getChromePaths () {
 function * getChromiumPaths () {
   // Try 'chromium-browser' first to avoid conflict with 'chromium' from chromium-bsu on Debian
   yield process.env.CHROMIUM_BIN;
-  yield which.sync('chromium-browser', { nothrow: true });
-  yield which.sync('chromium', { nothrow: true });
+  yield which('chromium-browser');
+  yield which('chromium');
 
   if (process.platform === 'darwin') {
     const appPath = '/Applications/Chromium.app/Contents/MacOS/Chromium';
@@ -93,8 +93,8 @@ function * getEdgePaths () {
   // https://github.com/actions/runner-images/blob/1ffc99a7ae/images/ubuntu/scripts/build/install-microsoft-edge.sh#L11
   // https://github.com/microsoft/playwright/blob/v1.49.1/packages/playwright-core/src/server/registry/index.ts#L560
   yield process.env.EDGE_BIN;
-  yield which.sync('microsoft-edge', { nothrow: true });
-  yield which.sync('microsoft-edge-stable', { nothrow: true });
+  yield which('microsoft-edge');
+  yield which('microsoft-edge-stable');
   yield '/opt/microsoft/msedge/msedge';
 
   if (process.platform === 'darwin') {

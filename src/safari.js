@@ -1,4 +1,4 @@
-import which from 'which';
+import which from './which.js';
 import { LocalBrowser, QTapError, CommandNotFoundError } from './util.js';
 /** @import { Logger } from './qtap.js' */
 
@@ -48,7 +48,7 @@ let sharedSafariDriverPort = null;
 async function safariOne (url, signals, logger) {
   // Step 1: Start safaridriver
   if (!sharedSafariDriverPort) {
-    const safaridriverBin = process.env.SAFARIDRIVER_BIN || which.sync('safaridriver', { nothrow: true });
+    const safaridriverBin = process.env.SAFARIDRIVER_BIN || which('safaridriver');
     if (process.platform !== 'darwin' || !safaridriverBin) {
       throw new CommandNotFoundError('Safari requires macOS and safaridriver');
     }
