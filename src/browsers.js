@@ -123,12 +123,16 @@ async function firefox (url, signals, logger, debugMode) {
   }
 
   // http://kb.mozillazine.org/About:config_entries
-  // https://github.com/sitespeedio/browsertime/blob/v23.5.0/lib/firefox/settings/firefoxPreferences.js
+  // https://github.com/sitespeedio/browsertime/blob/v27.4.1/lib/firefox/settings/firefoxPreferences.js
   // https://github.com/airtap/the-last-browser-launcher/blob/v0.1.1/lib/launch/index.js
   // https://github.com/karma-runner/karma-firefox-launcher/blob/v2.1.3/index.js
+  // https://github.com/mozilla/mozregression/blob/439f039571/mozregression/launchers.py#L357
+  // https://github.com/mozilla-firefox/infra-testing/blob/736b2b87e4f/browser/base/content/test/general/browser_datachoices_notification.js
+  // https://github.com/mozilla-firefox/firefox/blob/0e1add40350/testing/geckodriver/src/prefs.rs
   logger.debug('firefox_prefs_create', 'Creating temporary prefs.js file');
   fs.writeFileSync(path.join(profileDir, 'prefs.js'), createFirefoxPrefsJs({
     'app.update.disabledForTesting': true, // Disable auto-updates
+    'app.update.auto': false, // Disable auto-updates
     'browser.EULA.override': true, // Blank start, disable extra tab
     'browser.bookmarks.max_backups': 0, // Optimization, via sitespeedio/browsertime
     'browser.bookmarks.restore_default_bookmarks': false, // Optimization
@@ -142,15 +146,23 @@ async function firefox (url, signals, logger, debugMode) {
     'browser.shell.checkDefaultBrowser': false,
     'browser.startup.firstrunSkipsHomepage': false, // Blank start, disable extra tab
     'browser.startup.page': 0, // Blank start
+    'datareporting.healthreport.service.enabled': false, // Optimization
+    'datareporting.healthreport.uploadEnabled': false, // Optimization
+    'datareporting.policy.dataSubmissionEnabled': false, // Optimization, https://phabricator.wikimedia.org/T427103
     'datareporting.policy.dataSubmissionPolicyBypassNotification': true, // Blank start, disable extra tab for mozilla.org/en-US/privacy/firefox/
     'dom.disable_open_during_load': false,
     'dom.max_script_run_time': 0, // Disable "slow script" dialogs
     'dom.min_background_timeout_value': 10, // Optimization, via https://github.com/karma-runner/karma-firefox-launcher/issues/19
     'extensions.autoDisableScopes': 1,
     'extensions.update.enabled': false, // Disable auto-updates
+    'network.captive-portal-service.enabled': false, // Optimization
+    'network.connectivity-service.enabled': false, // Disable banner, https://github.com/sitespeedio/browsertime/issues/2207
+    'security.sandbox.warn_unprivileged_namespaces': false, // Optimization, https://bugzilla.mozilla.org/1930110
     'startup.homepage_override_url': '', // Blank start, disable extra tab
     'startup.homepage_welcome_url': '', // Blank start, disable extra tab
     'startup.homepage_welcome_url.additional': '', // Blank start, disable extra tab
+    'toolkit.telemetry.enabled': false, // Optimization
+    'toolkit.telemetry.reportingpolicy.firstRun': false, // Blank start, disable extra tab, https://github.com/karma-runner/karma-firefox-launcher/issues/89
   }));
   await LocalBrowser.spawn(getFirefoxPaths(), args, signals, logger);
 }
